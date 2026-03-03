@@ -2,48 +2,15 @@ import streamlit as st
 import requests
 from datetime import datetime
 import pytz
+import datetime as dt
 
-st.set_page_config(page_title="NHL Goal Probabilities", page_icon="🏒", layout="wide")
+st.set_page_config(page_title="NHL Raw Debug", page_icon="🏒", layout="wide")
 
-st.markdown("""
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Bebas+Neue&display=swap');
-  html, body, [class*="css"] { font-family: 'IBM Plex Mono', monospace; background-color: #0a0c10; color: #e0e0e0; }
-  .main, .block-container { background-color: #0a0c10; padding-top: 1.5rem; max-width: 800px; }
-  h1 { font-family: 'Bebas Neue', sans-serif; color: #00ff9d; letter-spacing: 4px; font-size: 2.2rem; }
-  .stButton>button { background: #00ff9d; color: #000; font-weight: 700; border: none; border-radius: 8px; width: 100%; }
-  .stButton>button:hover { background: #00cc7a; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th { background: #16213e; color: #00ff9d; padding: 10px 14px; text-align: left; font-size: 0.7rem; letter-spacing: 1px; }
-  td { padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-  tr:hover td { background: rgba(255,255,255,0.03); }
-  .bar-wrap { background: rgba(255,255,255,0.07); border-radius: 3px; height: 6px; width: 120px; display: inline-block; vertical-align: middle; margin-left: 8px; }
-  .bar-fill { height: 6px; border-radius: 3px; }
-  footer { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
+st.title("NHL FanDuel Raw Debug")
 
-st.markdown("# NHL GOAL PROBABILITIES")
-st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS MARKET · OVER 0.5</p>", unsafe_allow_html=True)
-
-# ── Sidebar
 with st.sidebar:
-    st.markdown("### Settings")
     api_key = st.text_input("Odds API Key", type="password", placeholder="the-odds-api.com key")
-    quota_used = st.session_state.get("quota_used")
-    quota_rem  = st.session_state.get("quota_remaining")
-    if quota_used is not None:
-        pct = quota_used / 500
-        col = "#00ff9d" if pct < 0.6 else ("#FFE066" if pct < 0.85 else "#ff6b6b")
-        bar = "#" * int(pct * 20) + "." * (20 - int(pct * 20))
-        st.markdown("---")
-        st.markdown("**API Quota**")
-        st.markdown(f"<div style='font-family:monospace;color:{col};font-size:0.75rem'>{bar}</div>", unsafe_allow_html=True)
-        st.markdown(f"<span style='color:{col};font-weight:700'>{quota_used}</span><span style='color:#555'> / 500 &nbsp;·&nbsp; </span><span style='color:#00ff9d;font-weight:700'>{quota_rem} left</span>", unsafe_allow_html=True)
-        if quota_rem and quota_rem <= 50:
-            st.warning(f"Only {quota_rem} requests left!")
 
-# ── Date picker
 import datetime as _dt
 _et  = pytz.timezone("America/Toronto")
 _now = datetime.now(_et)
@@ -60,214 +27,58 @@ with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
     fetch_btn = st.button("FETCH", use_container_width=True)
 
-st.markdown("---")
-
-# ── Helpers
-def american_to_implied(a):
-    dec = (a / 100 + 1) if a > 0 else (100 / abs(a) + 1)
-    return 1 / dec
-
-def remove_vig(yes_p, no_p):
-    return yes_p / (yes_p + no_p)
-
-# ── Fetch
-def fetch_data(api_key, target_date):
-    import datetime as dt2
-    tz = pytz.timezone("America/Toronto")
-
-    r = requests.get(
-        f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}",
-        timeout=60
-    )
-    r.raise_for_status()
-    events = r.json()
-
-    try:
-        st.session_state["quota_used"]      = int(r.headers.get("x-requests-used", 0))
-        st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
-    except Exception:
-        pass
-
-    # Convert every event to ET date and filter
-    all_et_dates = sorted(set(
-        dt2.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ")
-        .replace(tzinfo=pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
-        for e in events
-    ))
-
-    today_events = []
-    for e in events:
-        et_date = (
-            dt2.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ")
-            .replace(tzinfo=pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
-        )
-        if et_date == target_date:
-            today_events.append(e)
-
-    if not today_events:
-        return [], 1, all_et_dates, [], []
-
-    players   = {}
-    req_count = 1
-    raw       = []
-    seen_books = []
-    seen_mkts  = []
-
-    for event in today_events:
-        url = (
-            f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us,eu,uk,au"
-            f"&markets=player_goals,player_goal_scorer,player_goals_scored,player_anytime_goal_scorer,player_to_score"
-            f"&oddsFormat=american"
-        )
-        resp = requests.get(url, timeout=30)
-        req_count += 1
-        if resp.status_code != 200:
-            continue
-
-        data = resp.json()
-        raw.append(data)
-        game = f"{event['away_team']} @ {event['home_team']}"
-        et_date = (
-            dt2.datetime.strptime(event["commence_time"], "%Y-%m-%dT%H:%M:%SZ")
-            .replace(tzinfo=pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
-        )
-
-        for bm in data.get("bookmakers", []):
-            if bm["key"] not in seen_books:
-                seen_books.append(bm["key"])
-            for mkt in bm.get("markets", []):
-                entry = f"{bm['key']}:{mkt['key']}"
-                if entry not in seen_mkts:
-                    seen_mkts.append(entry)
-
-        for bm in data.get("bookmakers", []):
-            if bm["key"] != "fanduel":
-                continue
-            for mkt in bm.get("markets", []):
-                by_player = {}
-                for outcome in mkt.get("outcomes", []):
-                    name  = outcome["name"]
-                    price = outcome["price"]
-                    desc  = (outcome.get("description") or "").lower()
-                    if name not in by_player:
-                        by_player[name] = {}
-                    if desc == "over":
-                        by_player[name]["over"] = price
-                    elif desc == "under":
-                        by_player[name]["under"] = price
-                    elif desc in ("yes", "scorer", "to score", "anytime"):
-                        by_player[name]["over"] = price
-                    elif desc == "no":
-                        by_player[name]["under"] = price
-
-                for name, odds in by_player.items():
-                    if "over" not in odds:
-                        continue
-                    raw_yes = american_to_implied(odds["over"])
-                    prob = remove_vig(raw_yes, american_to_implied(odds["under"])) if "under" in odds else raw_yes
-                    # Try to determine player team from name match (fallback to game string)
-                    players[name] = {
-                        "name":  name,
-                        "game":  game,
-                        "prob":  prob,
-                        "over":  odds["over"],
-                        "under": odds.get("under"),
-                        "away":  event["away_team"],
-                        "home":  event["home_team"],
-                        "date":  et_date,
-                    }
-
-    st.session_state["pin_raw"] = raw
-    results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
-    return results, req_count, all_et_dates, seen_books, seen_mkts
-
-# ── Main
 if not api_key:
-    st.info("Add your the-odds-api.com key in the sidebar, then click FETCH.")
+    st.info("Add your API key in the sidebar.")
     st.stop()
 
-if fetch_btn or "pin_results" in st.session_state:
-    if fetch_btn:
-        st.session_state.pop("pin_results", None)
-        with st.spinner("Fetching..."):
-            try:
-                results, reqs, all_dates, seen_books, seen_mkts = fetch_data(api_key, selected_date)
-                st.session_state["pin_results"]  = results
-                st.session_state["pin_reqs"]     = reqs
-                st.session_state["pin_dates"]    = all_dates
-                st.session_state["pin_date_sel"] = selected_date
-                st.session_state["pin_books"]    = seen_books
-                st.session_state["pin_mkts"]     = seen_mkts
-            except Exception as e:
-                st.error(f"Error: {e}")
-                st.stop()
+if fetch_btn:
+    tz = pytz.timezone("America/Toronto")
 
-    results    = st.session_state.get("pin_results", [])
-    reqs       = st.session_state.get("pin_reqs", 0)
-    all_dates  = st.session_state.get("pin_dates", [])
-    date_sel   = st.session_state.get("pin_date_sel", selected_date)
-    seen_books = st.session_state.get("pin_books", [])
-    seen_mkts  = st.session_state.get("pin_mkts", [])
+    # Step 1: get events
+    with st.spinner("Fetching events..."):
+        r = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}",
+            timeout=60
+        )
+    st.write(f"Events response code: `{r.status_code}`")
+    events = r.json()
+    st.write(f"Total events returned: `{len(events)}`")
 
-    with st.expander("Debug info"):
-        st.write(f"**Selected date (ET):** `{date_sel}`")
-        st.write(f"**All ET dates with games:** {all_dates}")
-        st.write(f"**Bookmakers returned:** {seen_books}")
-        st.write(f"**Book:market combinations:** {seen_mkts}")
-        st.write(f"**Players parsed:** {len(results)}")
-        st.write(f"**Requests used:** {reqs}")
-        if st.checkbox("Show raw JSON"):
-            st.json(st.session_state.get("pin_raw", []))
+    # Show all events with their ET dates
+    all_et = []
+    for e in events:
+        utc_dt  = dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+        et_date = utc_dt.astimezone(tz).strftime("%Y-%m-%d")
+        all_et.append({"id": e["id"], "game": f"{e['away_team']} @ {e['home_team']}", "et_date": et_date, "utc": e["commence_time"]})
 
-    if not all_dates or date_sel not in all_dates:
-        st.warning(f"No NHL games found for **{date_sel}**. Dates available: {all_dates}")
+    st.write("**All events and their ET dates:**")
+    st.dataframe(all_et)
+
+    # Filter to selected date
+    today_events = [e for e in all_et if e["et_date"] == selected_date]
+    st.write(f"**Events on {selected_date}:** {len(today_events)}")
+
+    if not today_events:
+        st.warning(f"No games on {selected_date}. Pick a date from the list above.")
         st.stop()
 
-    if not results:
-        st.warning(
-            f"Games exist for **{date_sel}** but no Pinnacle player props returned.\n\n"
-            f"Bookmakers available: `{seen_books}`\n\n"
-            f"If `pinnacle` is missing from that list, the free API tier does not include Pinnacle player props. Try switching to `draftkings` or `fanduel`."
-        )
-        st.stop()
+    # Step 2: fetch FanDuel props for first game only to see raw JSON
+    first = next(e for e in events if e["id"] == today_events[0]["id"])
+    st.markdown(f"---\n**Fetching FanDuel props for: {today_events[0]['game']}**")
 
-    st.markdown(f"**{len(results)} players** · FanDuel · **{date_sel}**")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    rows = ""
-    for i, p in enumerate(results):
-        pct     = p["prob"] * 100
-        bar_w   = min(int(p["prob"] * 240), 240)
-        bar_col = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else ("#FF9933" if pct >= 15 else "#ff6b6b"))
-        over_s  = f"+{p['over']}" if p["over"] > 0 else str(p["over"])
-        under_s = (f"+{p['under']}" if p["under"] and p["under"] > 0 else str(p["under"])) if p["under"] else "—"
-        rank_col = "#00ff9d" if i < 3 else "#444"
-        away  = p.get("away", "")
-        home  = p.get("home", "")
-        gdate = p.get("date", "")
-        # We don't know which team the player is on from odds data alone,
-        # so show both teams as Away / Home with the game date
-        rows += (
-            "<tr>"
-            f"<td style='color:{rank_col};font-weight:700'>{i+1}</td>"
-            f"<td style='color:#f0f0f0;font-weight:{'700' if i < 5 else '400'}'>{p['name']}</td>"
-            f"<td style='color:#aaa;font-size:0.78rem'>{away}</td>"
-            f"<td style='color:#aaa;font-size:0.78rem'>{home}</td>"
-            f"<td style='color:#555;font-size:0.75rem'>{gdate}</td>"
-            f"<td style='font-weight:700;color:{bar_col}'>{pct:.1f}%"
-            f"<span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span></td>"
-            f"<td style='color:#aaa;font-family:monospace'>{over_s}</td>"
-            f"<td style='color:#555;font-family:monospace'>{under_s}</td>"
-            "</tr>"
-        )
-
-    st.markdown(
-        "<table><thead><tr>"
-        "<th>#</th><th>PLAYER</th><th>TEAM</th><th>OPPONENT</th><th>DATE</th>"
-        "<th>PROB (vig-removed)</th><th>OVER 0.5</th><th>UNDER 0.5</th>"
-        f"</tr></thead><tbody>{rows}</tbody></table>",
-        unsafe_allow_html=True
+    url = (
+        f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{first['id']}/odds"
+        f"?apiKey={api_key}&regions=us,eu,uk,au"
+        f"&markets=player_goals,player_goal_scorer,player_goals_scored,player_anytime_goal_scorer,player_to_score"
+        f"&oddsFormat=american&bookmakers=fanduel"
     )
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.caption(f"Source: FanDuel · Requests used: {reqs} · Not gambling advice")
+    st.write(f"URL (key hidden): `...events/{first['id']}/odds?regions=us,eu,uk,au&markets=player_goals,...&bookmakers=fanduel`")
+
+    with st.spinner("Fetching props..."):
+        resp = requests.get(url, timeout=30)
+
+    st.write(f"Props response code: `{resp.status_code}`")
+    st.write(f"Remaining requests: `{resp.headers.get('x-requests-remaining', 'N/A')}`")
+
+    st.markdown("**Raw JSON from FanDuel:**")
+    st.json(resp.json())
