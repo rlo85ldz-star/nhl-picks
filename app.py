@@ -134,7 +134,8 @@ def fetch_data(api_key, target_date):
         home = event["home_team"]
         url  = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us,eu,uk,au"
+            # f"?apiKey={api_key}&regions=us,eu,uk,au"
+            f"?apiKey={api_key}&regions=us"
             f"&markets=player_goals"
             f"&oddsFormat=american&bookmakers=fanduel"
         )
