@@ -134,8 +134,7 @@ def fetch_data(api_key, target_date):
         home = event["home_team"]
         url  = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            # f"?apiKey={api_key}&regions=us,eu,uk,au"
-            f"?apiKey={api_key}&regions=us"
+            f"?apiKey={api_key}&regions=us,eu,uk,au"
             f"&markets=player_goals"
             f"&oddsFormat=american&bookmakers=fanduel"
         )
@@ -150,7 +149,6 @@ def fetch_data(api_key, target_date):
             pass
 
         if resp.status_code != 200:
-            # st.warning(f"Failed to fetch {away} @ {home}: status {resp.status_code}")
             continue
 
         for bm in resp.json().get("bookmakers", []):
@@ -314,6 +312,12 @@ if fetch_btn or "fd_players" in st.session_state:
                     ranked.append({"name": raw_name.strip(), "prob": None, "over": "—", "under": "—", "away": "—", "home": "—"})
             ranked.sort(key=lambda x: x["prob"] if x["prob"] else -1, reverse=True)
 
+            with st.expander(f"All candidates for Pick #{pick_num} — debug"):
+                st.write("**Names you entered:**", candidates)
+                st.write("**How they look after conversion:**", [c.strip().lower() for c in candidates])
+                st.write("**Sample of FanDuel names → converted:**")
+                sample = {v["name"]: initial_last(v["name"]) for v in list(players.values())[:10]}
+                st.write(sample)
             with st.expander(f"All candidates for Pick #{pick_num}"):
                 rows = ""
                 for i, p in enumerate(ranked):
