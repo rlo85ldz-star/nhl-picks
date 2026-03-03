@@ -4,8 +4,8 @@ from datetime import datetime
 import pytz
 import datetime as dt
 
-st.set_page_config(page_title="NHL pinnacle Props", page_icon="🏒", layout="wide")
-st.title("NHL pinnacle - player_goals Props")
+st.set_page_config(page_title="NHL fanduel Props", page_icon="🏒", layout="wide")
+st.title("NHL fanduel - player_goals Props")
 
 with st.sidebar:
     api_key = st.text_input("Odds API Key", type="password", placeholder="the-odds-api.com key")
@@ -58,9 +58,9 @@ if fetch_btn:
         st.warning(f"No games on {selected_date}. Available dates: {all_dates}")
         st.stop()
 
-    # Step 2: fetch player_goals from pinnacle for ALL games today
+    # Step 2: fetch player_goals from fanduel for ALL games today
     st.markdown("---")
-    st.write(f"Fetching `player_goals` from pinnacle for {len(today_events)} games...")
+    st.write(f"Fetching `player_goals` from fanduel for {len(today_events)} games...")
 
     all_raw = []
     req_count = 1
@@ -71,7 +71,7 @@ if fetch_btn:
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
             f"?apiKey={api_key}&regions=us,eu,uk,au"
             f"&markets=player_goals"
-            f"&oddsFormat=american&bookmakers=pinnacle"
+            f"&oddsFormat=american&bookmakers=fanduel"
         )
         resp = requests.get(url, timeout=30)
         req_count += 1
