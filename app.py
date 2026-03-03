@@ -344,7 +344,7 @@ def fetch_picks(api_key: str, target_date: str):
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    return results, today_str, requests_used
+    return results, target_date, requests_used
 
 # ─── UI ──────────────────────────────────────────────────────
 st.markdown("""
