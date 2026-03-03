@@ -585,23 +585,23 @@ elif fetch_btn or "results" in st.session_state:
     st.caption(f"Data cached 30 min · API requests used this session: {reqs} · Not gambling advice")
 
 
-# ─── INVESTIGATION PANEL ─────────────────────────────────────
-st.markdown("---")
-with st.expander("🛠️ API INVESTIGATION & RAW DATA"):
-    st.write("Use this section to see exactly what the API sent back.")
+# # ─── INVESTIGATION PANEL ─────────────────────────────────────
+# st.markdown("---")
+# with st.expander("🛠️ API INVESTIGATION & RAW DATA"):
+#     st.write("Use this section to see exactly what the API sent back.")
     
-    if "raw_events_json" not in st.session_state:
-        st.info("No data fetched yet. Click 'FETCH' to see raw API responses.")
-    else:
-        tab1, tab2 = st.tabs(["📅 Raw Events (Schedule)", "🏒 Raw Odds (Player Props)"])
+#     if "raw_events_json" not in st.session_state:
+#         st.info("No data fetched yet. Click 'FETCH' to see raw API responses.")
+#     else:
+#         tab1, tab2 = st.tabs(["📅 Raw Events (Schedule)", "🏒 Raw Odds (Player Props)"])
         
-        with tab1:
-            st.markdown("**All events returned for the NHL:**")
-            st.json(st.session_state["raw_events_json"])
+#         with tab1:
+#             st.markdown("**All events returned for the NHL:**")
+#             st.json(st.session_state["raw_events_json"])
             
-        with tab2:
-            st.markdown("**Player prop data for filtered games:**")
-            if not st.session_state.get("raw_odds_json"):
-                st.warning("No player props found. This usually means the books haven't posted them yet.")
-            else:
-                st.json(st.session_state["raw_odds_json"])
+#         with tab2:
+#             st.markdown("**Player prop data for filtered games:**")
+#             if not st.session_state.get("raw_odds_json"):
+#                 st.warning("No player props found. This usually means the books haven't posted them yet.")
+#             else:
+#                 st.json(st.session_state["raw_odds_json"])
