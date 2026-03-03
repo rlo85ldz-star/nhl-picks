@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 from datetime import datetime, timezone
 import pytz
+import datetime as dt
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────
 st.set_page_config(
@@ -239,6 +240,8 @@ def fetch_picks(api_key: str):
     et = pytz.timezone("America/Toronto")
     now_et       = datetime.now(et)
     today_str    = now_et.strftime("%Y-%m-%d")
+    now_utc      = datetime.now(timezone.utc)
+    today_utc    = now_utc.strftime("%Y-%m-%d")
     tomorrow_str = (now_et + dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
     events_url = f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}"
@@ -262,7 +265,7 @@ def fetch_picks(api_key: str):
     # Match today OR tomorrow UTC — evening ET games often appear as next UTC day
     today_events = [
         e for e in events
-        if e["commence_time"][:10] in (today_str, tomorrow_str)
+        if e["commence_time"][:10] in (today_str, tomorrow_str, today_utc)
     ]
     if not today_events:
         return [], today_str, 0
