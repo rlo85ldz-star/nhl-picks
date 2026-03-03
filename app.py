@@ -235,15 +235,35 @@ def fmt_american(a):
 # ─── API ─────────────────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_picks(api_key: str):
+    import datetime as dt
     et = pytz.timezone("America/Toronto")
-    today_str = datetime.now(et).strftime("%Y-%m-%d")
+    now_et       = datetime.now(et)
+    today_str    = now_et.strftime("%Y-%m-%d")
+    tomorrow_str = (now_et + dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
     events_url = f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}"
     r = requests.get(events_url, timeout=15)
     r.raise_for_status()
     events = r.json()
 
-    today_events = [e for e in events if e["commence_time"][:10] == today_str]
+    # Capture quota from response headers (the-odds-api sends these on every call)
+    try:
+        st.session_state["quota_used"]      = int(r.headers.get("x-requests-used", 0))
+        st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
+    except Exception:
+        pass
+
+    # Debug: store what dates the API actually returned
+    all_dates = sorted(set(e["commence_time"][:10] for e in events)) if events else []
+    st.session_state["debug_dates"]        = all_dates
+    st.session_state["debug_today"]        = today_str
+    st.session_state["debug_total_events"] = len(events)
+
+    # Match today OR tomorrow UTC — evening ET games often appear as next UTC day
+    today_events = [
+        e for e in events
+        if e["commence_time"][:10] in (today_str, tomorrow_str)
+    ]
     if not today_events:
         return [], today_str, 0
 
@@ -341,6 +361,43 @@ with st.sidebar:
         help="Free at the-odds-api.com — 500 requests/month",
     )
     st.markdown("---")
+
+    # ── API Quota tracker
+    quota_used      = st.session_state.get("quota_used", None)
+    quota_remaining = st.session_state.get("quota_remaining", None)
+    if quota_used is not None:
+        used      = quota_used
+        remaining = quota_remaining
+        total     = 500
+        pct_used  = used / total
+        bar_color = "#00ff9d" if pct_used < 0.6 else ("#FFE066" if pct_used < 0.85 else "#FF6666")
+        bar_filled = int(pct_used * 20)
+        bar = "█" * bar_filled + "░" * (20 - bar_filled)
+        st.markdown("**📊 API Quota (this month)**")
+        st.markdown(
+            f"<div style='font-family:monospace;font-size:0.75rem;color:{bar_color}'>{bar}</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<div style='font-size:0.8rem'>"
+            f"<span style='color:{bar_color};font-weight:700'>{used}</span>"
+            f"<span style='color:#555'> / {total} used &nbsp;·&nbsp; </span>"
+            f"<span style='color:#00ff9d;font-weight:700'>{remaining} left</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if remaining <= 50:
+            st.warning(f"⚠️ Only {remaining} requests left this month!")
+        elif remaining <= 100:
+            st.markdown(
+                f"<div style='font-size:0.75rem;color:#FFE066'>⚡ {remaining} requests remaining</div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown("**📊 API Quota**")
+        st.caption("Fetch once to see quota")
+
+    st.markdown("---")
     st.markdown("**How the model works**")
     st.markdown("""
 - **60%** Weighted consensus  
@@ -426,7 +483,15 @@ elif fetch_btn or "results" in st.session_state:
     reqs      = st.session_state.get("reqs", 0)
 
     if not results:
-        st.markdown('<div class="warning-box">⚠️ No NHL games found for today. Try again on a game day — props usually post 2–4 hours before puck drop.</div>', unsafe_allow_html=True)
+        debug_dates = st.session_state.get("debug_dates", [])
+        debug_today = st.session_state.get("debug_today", "")
+        debug_total = st.session_state.get("debug_total_events", 0)
+        st.markdown('<div class="warning-box">⚠️ No NHL games found for today. Props usually post 2-4 hours before puck drop.</div>', unsafe_allow_html=True)
+        with st.expander("🔍 Debug info — click to diagnose"):
+            st.write(f"**App thinks today is:** `{debug_today}` (Eastern Time)")
+            st.write(f"**Total events returned by API:** {debug_total}")
+            st.write(f"**Game dates in API response:** {debug_dates}")
+            st.info("If your date is missing above, share this info so we can fix it.")
         st.stop()
 
     # Filter + sort
