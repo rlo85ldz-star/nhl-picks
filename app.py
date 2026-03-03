@@ -241,14 +241,11 @@ def fetch_picks(api_key: str, target_date: str):
     # 1. SETUP TIMEZONE BOUNDARIES
     tz_est = pytz.timezone("America/Toronto")
     try:
-        # Create start/end of the day in EST
         est_start = tz_est.localize(dt.datetime.strptime(target_date, "%Y-%m-%d"))
         est_end = est_start + dt.timedelta(hours=23, minutes=59, seconds=59)
-        # Convert to UTC for API matching
         utc_start = est_start.astimezone(pytz.utc)
         utc_end = est_end.astimezone(pytz.utc)
     except Exception as e:
-        st.error(f"Date parsing error: {e}")
         return [], target_date, 0
 
     # 2. FETCH EVENTS
@@ -256,6 +253,14 @@ def fetch_picks(api_key: str, target_date: str):
     r = requests.get(events_url, timeout=15)
     r.raise_for_status()
     events = r.json()
+
+    # --- DEBUG SECTION: POPULATE THE BOXES ---
+    # This captures EVERY date the API is offering before we filter them
+    all_api_dates = sorted(set(e["commence_time"][:10] for e in events)) if events else []
+    st.session_state["debug_dates"] = all_api_dates 
+    st.session_state["debug_today"] = target_date
+    st.session_state["debug_total_events_raw"] = len(events)
+    # -----------------------------------------
 
     # Quota tracking
     try:
@@ -266,18 +271,16 @@ def fetch_picks(api_key: str, target_date: str):
     # 3. FILTER EVENTS FOR THE EST DAY
     today_events = []
     for e in events:
-        # Convert API time string to UTC datetime object
         event_time_utc = dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
         if utc_start <= event_time_utc <= utc_end:
             today_events.append(e)
 
-    st.session_state["debug_today"] = target_date
     st.session_state["debug_total_events"] = len(today_events)
 
     if not today_events:
-        return [], target_date, 1 # Return empty list if no games
+        return [], target_date, 1
 
-    # 4. FETCH ODDS FOR EACH EVENT
+    # 4. FETCH ODDS
     books = ",".join(BOOK_WEIGHTS.keys())
     all_players = {}
     requests_used = 1
@@ -315,7 +318,7 @@ def fetch_picks(api_key: str, target_date: str):
                     else:
                         all_players[name]["book_odds"][book]["no_odds"] = price
 
-    # 5. PROCESS RESULTS & SCORE
+    # 5. PROCESS RESULTS
     results = []
     for p in all_players.values():
         book_list = [
@@ -327,33 +330,17 @@ def fetch_picks(api_key: str, target_date: str):
         cons = compute_consensus(book_list)
         sharp = compute_sharp(book_list)
         score = ml_score(cons, sharp, p["name"])
-
         best = max(book_list, key=lambda b: american_to_decimal(b["yes_odds"]))
-        pin = next((b for b in book_list if b["book"] == "pinnacle"), None)
-        dk = next((b for b in book_list if b["book"] == "draftkings"), None)
-        fd = next((b for b in book_list if b["book"] == "fanduel"), None)
-
+        
         results.append({
-            "name": p["name"],
-            "game": p["game"],
-            "score": score,
-            "consensus": cons,
-            "sharp": sharp,
-            "grade": grade(score),
-            "gpg": PLAYER_STATS.get(p["name"]),
-            "books": len(book_list),
-            "book_list": book_list,
-            "best_odds": fmt_american(best["yes_odds"]),
-            "best_book": best["book"],
-            "pinnacle": fmt_american(pin["yes_odds"]) if pin else "—",
-            "draftkings": fmt_american(dk["yes_odds"]) if dk else "—",
-            "fanduel": fmt_american(fd["yes_odds"]) if fd else "—",
-            "value": score - cons,
+            "name": p["name"], "game": p["game"], "score": score,
+            "consensus": cons, "sharp": sharp, "grade": grade(score),
+            "gpg": PLAYER_STATS.get(p["name"]), "books": len(book_list),
+            "book_list": book_list, "best_odds": fmt_american(best["yes_odds"]),
+            "best_book": best["book"], "value": score - cons,
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    
-    # 6. THE VITAL RETURN STATEMENT
     return results, target_date, requests_used
 
 # ─── UI ──────────────────────────────────────────────────────
