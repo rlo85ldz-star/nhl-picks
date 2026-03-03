@@ -187,18 +187,30 @@ def fetch_data(api_key, target_date):
     progress.empty()
     return players, req_count, all_et_dates
 
+def initial_last(full_name):
+    """Convert 'David Pastrnak' -> 'd. pastrnak'"""
+    parts = full_name.strip().split()
+    if len(parts) >= 2:
+        return (parts[0][0] + ". " + " ".join(parts[1:])).lower()
+    return full_name.strip().lower()
+
+def find_player(players_dict, candidate):
+    """Match a candidate like 'D. Pastrnak' against full names in players_dict."""
+    candidate = candidate.strip().lower()
+    # Build a lookup of initial.lastname -> player for every player we have
+    for full_key, player in players_dict.items():
+        if initial_last(player["name"]) == candidate:
+            return player
+        # Also try direct match in case full name was pasted
+        if full_key == candidate:
+            return player
+    return None
+
 def find_best(players_dict, candidates):
     """Given a list of candidate names, return the one with highest probability."""
     best = None
     for raw_name in candidates:
-        key = raw_name.strip().lower()
-        # Try exact match first, then partial
-        match = players_dict.get(key)
-        if not match:
-            for k, v in players_dict.items():
-                if key in k or k in key:
-                    match = v
-                    break
+        match = find_player(players_dict, raw_name)
         if match and (best is None or match["prob"] > best["prob"]):
             best = match
     return best
@@ -293,13 +305,7 @@ if fetch_btn or "fd_players" in st.session_state:
             # Show all candidates ranked
             ranked = []
             for raw_name in candidates:
-                key   = raw_name.strip().lower()
-                match = players.get(key)
-                if not match:
-                    for k, v in players.items():
-                        if key in k or k in key:
-                            match = v
-                            break
+                match = find_player(players, raw_name)
                 if match:
                     ranked.append(match)
                 else:
