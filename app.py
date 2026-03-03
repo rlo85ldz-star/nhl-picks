@@ -24,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("# NHL GOAL PROBABILITIES")
-st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>PINNACLE · PLAYER_GOALS MARKET · OVER 0.5</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS MARKET · OVER 0.5</p>", unsafe_allow_html=True)
 
 # ── Sidebar
 with st.sidebar:
@@ -128,6 +128,10 @@ def fetch_data(api_key, target_date):
         data = resp.json()
         raw.append(data)
         game = f"{event['away_team']} @ {event['home_team']}"
+        et_date = (
+            dt2.datetime.strptime(event["commence_time"], "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
+        )
 
         for bm in data.get("bookmakers", []):
             if bm["key"] not in seen_books:
@@ -138,7 +142,7 @@ def fetch_data(api_key, target_date):
                     seen_mkts.append(entry)
 
         for bm in data.get("bookmakers", []):
-            if bm["key"] != "pinnacle":
+            if bm["key"] != "fanduel":
                 continue
             for mkt in bm.get("markets", []):
                 by_player = {}
@@ -162,12 +166,16 @@ def fetch_data(api_key, target_date):
                         continue
                     raw_yes = american_to_implied(odds["over"])
                     prob = remove_vig(raw_yes, american_to_implied(odds["under"])) if "under" in odds else raw_yes
+                    # Try to determine player team from name match (fallback to game string)
                     players[name] = {
                         "name":  name,
                         "game":  game,
                         "prob":  prob,
                         "over":  odds["over"],
                         "under": odds.get("under"),
+                        "away":  event["away_team"],
+                        "home":  event["home_team"],
+                        "date":  et_date,
                     }
 
     st.session_state["pin_raw"] = raw
@@ -224,7 +232,7 @@ if fetch_btn or "pin_results" in st.session_state:
         )
         st.stop()
 
-    st.markdown(f"**{len(results)} players** · Pinnacle · **{date_sel}**")
+    st.markdown(f"**{len(results)} players** · FanDuel · **{date_sel}**")
     st.markdown("<br>", unsafe_allow_html=True)
 
     rows = ""
@@ -235,11 +243,18 @@ if fetch_btn or "pin_results" in st.session_state:
         over_s  = f"+{p['over']}" if p["over"] > 0 else str(p["over"])
         under_s = (f"+{p['under']}" if p["under"] and p["under"] > 0 else str(p["under"])) if p["under"] else "—"
         rank_col = "#00ff9d" if i < 3 else "#444"
+        away  = p.get("away", "")
+        home  = p.get("home", "")
+        gdate = p.get("date", "")
+        # We don't know which team the player is on from odds data alone,
+        # so show both teams as Away / Home with the game date
         rows += (
             "<tr>"
             f"<td style='color:{rank_col};font-weight:700'>{i+1}</td>"
             f"<td style='color:#f0f0f0;font-weight:{'700' if i < 5 else '400'}'>{p['name']}</td>"
-            f"<td style='color:#888;font-size:0.78rem'>{p['game']}</td>"
+            f"<td style='color:#aaa;font-size:0.78rem'>{away}</td>"
+            f"<td style='color:#aaa;font-size:0.78rem'>{home}</td>"
+            f"<td style='color:#555;font-size:0.75rem'>{gdate}</td>"
             f"<td style='font-weight:700;color:{bar_col}'>{pct:.1f}%"
             f"<span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span></td>"
             f"<td style='color:#aaa;font-family:monospace'>{over_s}</td>"
@@ -249,10 +264,10 @@ if fetch_btn or "pin_results" in st.session_state:
 
     st.markdown(
         "<table><thead><tr>"
-        "<th>#</th><th>PLAYER</th><th>GAME</th>"
+        "<th>#</th><th>PLAYER</th><th>TEAM</th><th>OPPONENT</th><th>DATE</th>"
         "<th>PROB (vig-removed)</th><th>OVER 0.5</th><th>UNDER 0.5</th>"
         f"</tr></thead><tbody>{rows}</tbody></table>",
         unsafe_allow_html=True
     )
     st.markdown("<br>", unsafe_allow_html=True)
-    st.caption(f"Source: Pinnacle · Requests used: {reqs} · Not gambling advice")
+    st.caption(f"Source: FanDuel · Requests used: {reqs} · Not gambling advice")
