@@ -270,7 +270,9 @@ def fetch_picks(api_key: str, target_date: str):
     today_events = []
     for e in events:
         event_time_utc = dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
-        if utc_start <= event_time_utc <= utc_end:
+        # if utc_start <= event_time_utc <= utc_end:
+        event_et_date = event_utc.astimezone(tz_est).strftime("%Y-%m-%d")
+        if event_et_date == target_date:
             today_events.append(e)
 
     st.session_state["debug_total_events"] = len(today_events)
