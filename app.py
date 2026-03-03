@@ -254,7 +254,7 @@ def fetch_picks(api_key: str, target_date: str):
     r.raise_for_status()
     events = r.json()
 
-    st.session_state["raw_events_json"] = events
+    # st.session_state["raw_events_json"] = events
 
     # --- DEBUG SECTION: POPULATE THE BOXES ---
     # This captures EVERY date the API is offering before we filter them
@@ -342,7 +342,7 @@ def fetch_picks(api_key: str, target_date: str):
             "best_book": best["book"], "value": score - cons,
         })
 
-    st.session_state["raw_odds_json"] = raw_odds_data
+    # st.session_state["raw_odds_json"] = raw_odds_data
     
     results.sort(key=lambda x: x["score"], reverse=True)
     return results, target_date, requests_used
