@@ -337,8 +337,8 @@ with st.sidebar:
     api_key = st.text_input(
         "Odds API Key",
         type="password",
-        placeholder="Paste key from theOddsAPI.com",
-        help="Free at theOddsAPI.com — 500 requests/month",
+        placeholder="Paste key from the-odds-api.com",
+        help="Free at the-odds-api.com — 500 requests/month",
     )
     st.markdown("---")
     st.markdown("**How the model works**")
@@ -396,7 +396,7 @@ if not api_key:
     st.markdown("""
 <div class="warning-box">
   👆 Add your <strong>Odds API key</strong> in the sidebar to fetch live odds.<br>
-  Get a free key at <strong>theOddsAPI.com</strong> (500 requests/month — enough for daily use).
+  Get a free key at <strong>the-odds-api.com</strong> (500 requests/month — enough for daily use).
 </div>
 """, unsafe_allow_html=True)
 

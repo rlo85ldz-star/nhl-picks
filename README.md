@@ -1,493 +1,73 @@
-import streamlit as st
-import requests
-from datetime import datetime, timezone
-import pytz
+# 🏒 NHL Goalscorer ML — Tim Hortons Optimizer
 
-# ─── PAGE CONFIG ─────────────────────────────────────────────
-st.set_page_config(
-    page_title="NHL Goalscorer Picks",
-    page_icon="🏒",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+Weighted consensus model pulling live odds from Pinnacle, DraftKings, FanDuel and 9 other books to predict NHL goalscorers.
 
-# ─── CUSTOM CSS ──────────────────────────────────────────────
-st.markdown("""
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Bebas+Neue&display=swap');
+## Deploy to Streamlit Cloud (phone-friendly, free)
 
-  html, body, [class*="css"] {
-    font-family: 'IBM Plex Mono', monospace;
-    background-color: #0a0c10;
-    color: #e0e0e0;
-  }
-  .main { background-color: #0a0c10; }
-  .block-container { padding-top: 1.5rem; max-width: 900px; }
+### Step 1 — GitHub
+1. Go to **github.com** → sign in (or create free account)
+2. Click **"+"** → **"New repository"**
+3. Name it `nhl-picks`, set to **Public**, click **Create**
+4. Click **"uploading an existing file"**
+5. Upload all 3 files/folders:
+   - `app.py`
+   - `requirements.txt`
+   - `.streamlit/config.toml`
+6. Click **Commit changes**
 
-  .title-block {
-    background: linear-gradient(135deg, #0d1117 0%, #0a0c10 100%);
-    border: 1px solid rgba(0,255,157,0.2);
-    border-radius: 12px;
-    padding: 20px 24px 14px;
-    margin-bottom: 20px;
-  }
-  .title-text {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 2.4rem;
-    letter-spacing: 4px;
-    color: #00ff9d;
-    text-shadow: 0 0 30px rgba(0,255,157,0.3);
-    margin: 0;
-  }
-  .subtitle-text {
-    font-size: 0.75rem;
-    color: #555;
-    letter-spacing: 2px;
-    margin-top: 2px;
-  }
+### Step 2 — Streamlit Cloud
+1. Go to **share.streamlit.io** → sign in with GitHub
+2. Click **"New app"**
+3. Select your `nhl-picks` repo
+4. Main file path: `app.py`
+5. Click **Deploy**
+6. Wait ~2 minutes → you get a public URL like `https://yourname-nhl-picks.streamlit.app`
 
-  .top-picks-bar {
-    background: linear-gradient(135deg, rgba(0,255,157,0.08), rgba(126,255,245,0.04));
-    border: 1px solid rgba(0,255,157,0.2);
-    border-radius: 10px;
-    padding: 14px 18px;
-    margin-bottom: 16px;
-  }
-  .top-picks-label {
-    font-size: 0.7rem;
-    color: #00ff9d;
-    letter-spacing: 2px;
-    margin-bottom: 10px;
-  }
+### Step 3 — Add your API Key (secrets)
+In Streamlit Cloud dashboard:
+1. Click your app → **Settings** → **Secrets**
+2. Paste this (replace with your real key):
+```
+ODDS_API_KEY = "your_key_here"
+```
+> Or just paste your key directly in the sidebar when the app loads.
 
-  .player-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-bottom: 8px;
-    transition: border-color 0.2s;
-  }
-  .player-card:hover { border-color: rgba(0,255,157,0.3); }
+### Step 4 — Get your Odds API key
+- Go to **theOddsAPI.com**
+- Sign up free → copy your API key
+- Free tier: **500 requests/month** (plenty for daily use)
 
-  .grade-aplus { color: #00ff9d; font-weight: 700; }
-  .grade-a     { color: #00ff9d; font-weight: 700; }
-  .grade-bplus { color: #FFE066; font-weight: 700; }
-  .grade-b     { color: #FFE066; font-weight: 700; }
-  .grade-c     { color: #FF9933; font-weight: 700; }
-  .grade-d     { color: #FF6666; font-weight: 700; }
+---
 
-  .pct-high  { color: #00ff9d; font-weight: 700; font-size: 1.1rem; }
-  .pct-mid   { color: #FFE066; font-weight: 700; font-size: 1.1rem; }
-  .pct-low   { color: #FF9933; font-weight: 700; font-size: 1.1rem; }
+## Run Locally (optional)
 
-  div[data-testid="metric-container"] {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px;
-    padding: 10px 14px;
-  }
-  div[data-testid="metric-container"] label { color: #555 !important; font-size: 0.7rem !important; }
-  div[data-testid="metric-container"] div   { color: #e0e0e0 !important; }
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-  .stButton>button {
-    background: #00ff9d;
-    color: #000;
-    font-family: 'IBM Plex Mono', monospace;
-    font-weight: 700;
-    font-size: 0.85rem;
-    letter-spacing: 1px;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 24px;
-    width: 100%;
-  }
-  .stButton>button:hover { background: #00cc7a; color: #000; }
+Then open `http://localhost:8501` in your browser.
 
-  .stSelectbox label, .stSlider label { color: #555 !important; font-size: 0.75rem !important; }
+---
 
-  .book-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    margin: 2px;
-    font-family: monospace;
-  }
-  .book-sharp  { background: rgba(0,255,157,0.12); border: 1px solid rgba(0,255,157,0.3); color: #00ff9d; }
-  .book-normal { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #888; }
+## How the Model Works
 
-  .warning-box {
-    background: rgba(255,209,0,0.08);
-    border: 1px solid rgba(255,209,0,0.25);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 0.8rem;
-    color: #FFE066;
-    margin-bottom: 12px;
-  }
-  .error-box {
-    background: rgba(255,80,80,0.08);
-    border: 1px solid rgba(255,80,80,0.25);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 0.8rem;
-    color: #ff6b6b;
-    margin-bottom: 12px;
-  }
-  hr { border-color: rgba(255,255,255,0.07); }
-  footer { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
+| Component | Weight | Description |
+|---|---|---|
+| Weighted Consensus | 60% | All books blended, Pinnacle weighted 1.0x |
+| Sharp-Only Signal | 25% | Pinnacle + BetOnline only |
+| Historical G/GP | 15% | Season goals-per-game rate |
 
-# ─── CONSTANTS ───────────────────────────────────────────────
-BOOK_WEIGHTS = {
-    "pinnacle":        1.00,
-    "betonlineag":     0.80,
-    "lowvig":          0.85,
-    "draftkings":      0.75,
-    "fanduel":         0.75,
-    "betmgm":          0.65,
-    "caesars":         0.65,
-    "pointsbetus":     0.60,
-    "betrivers":       0.60,
-    "williamhill_us":  0.60,
-    "mybookieag":      0.55,
-    "unibet_us":       0.60,
-}
+**Book weights:** Pinnacle (1.0) → BetOnline (0.8) → LowVig (0.85) → DraftKings/FanDuel (0.75) → recreational books (0.55–0.65)
 
-SHARP_BOOKS = {"pinnacle", "betonlineag", "lowvig"}
+## Grade Scale
+- **A+ (≥35%)** — Very strong, single pick
+- **A (≥30%)** — Strong pick
+- **B+ (≥25%)** — Solid, good for multi-pick days
+- **B (≥20%)** — Decent
+- **C/D** — Skip for Tim Hortons
 
-PLAYER_STATS = {
-    "Auston Matthews":   0.58,
-    "Leon Draisaitl":    0.52,
-    "David Pastrnak":    0.50,
-    "Nathan MacKinnon":  0.48,
-    "Connor McDavid":    0.45,
-    "Tage Thompson":     0.45,
-    "Nikita Kucherov":   0.42,
-    "Brayden Point":     0.41,
-    "Kirill Kaprizov":   0.40,
-    "Sam Reinhart":      0.39,
-    "Jason Robertson":   0.38,
-    "Matthew Tkachuk":   0.37,
-    "William Nylander":  0.36,
-    "Brady Tkachuk":     0.30,
-    "Nico Hischier":     0.28,
-    "Sebastian Aho":     0.32,
-    "Elias Pettersson":  0.33,
-    "Jack Hughes":       0.34,
-    "Cole Caufield":     0.35,
-    "Tim Stutzle":       0.31,
-}
-
-# ─── MATH ────────────────────────────────────────────────────
-def american_to_decimal(a):
-    return (a / 100) + 1 if a > 0 else (100 / abs(a)) + 1
-
-def american_to_implied(a):
-    return 1 / american_to_decimal(a)
-
-def remove_vig(yes_p, no_p):
-    total = yes_p + no_p
-    return yes_p / total
-
-def compute_consensus(book_odds):
-    w_sum, w_total = 0.0, 0.0
-    for b in book_odds:
-        w = BOOK_WEIGHTS.get(b["book"], 0.5)
-        raw_yes = american_to_implied(b["yes_odds"])
-        raw_no  = american_to_implied(b["no_odds"]) if b.get("no_odds") else (1 - raw_yes) * 1.05
-        clean_yes = remove_vig(raw_yes, raw_no)
-        w_sum   += clean_yes * w
-        w_total += w
-    return w_sum / w_total if w_total > 0 else 0.0
-
-def compute_sharp(book_odds):
-    sharp = [b for b in book_odds if b["book"] in SHARP_BOOKS]
-    return compute_consensus(sharp) if sharp else None
-
-def ml_score(consensus, sharp, name):
-    gpg   = PLAYER_STATS.get(name)
-    stats = min(gpg / 0.5, 1.4) * 0.15 if gpg else 0.10
-    sw    = 0.25 if sharp is not None else 0.0
-    cw    = 1.0 - sw - 0.15
-    score = consensus * cw + (sharp or consensus) * sw + stats
-    return min(score, 0.95)
-
-def grade(p):
-    if p >= 0.35: return "A+"
-    if p >= 0.30: return "A"
-    if p >= 0.25: return "B+"
-    if p >= 0.20: return "B"
-    if p >= 0.15: return "C"
-    return "D"
-
-def grade_color(p):
-    if p >= 0.30: return "#00ff9d"
-    if p >= 0.20: return "#FFE066"
-    if p >= 0.15: return "#FF9933"
-    return "#FF6666"
-
-def fmt_american(a):
-    return f"+{a}" if a > 0 else str(a)
-
-# ─── API ─────────────────────────────────────────────────────
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_picks(api_key: str):
-    et = pytz.timezone("America/Toronto")
-    today_str = datetime.now(et).strftime("%Y-%m-%d")
-
-    events_url = f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}"
-    r = requests.get(events_url, timeout=15)
-    r.raise_for_status()
-    events = r.json()
-
-    today_events = [e for e in events if e["commence_time"][:10] == today_str]
-    if not today_events:
-        return [], today_str, 0
-
-    books = ",".join(BOOK_WEIGHTS.keys())
-    all_players = {}
-    requests_used = 1
-
-    for event in today_events[:10]:
-        url = (
-            f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us,eu&markets=player_goal_scorer"
-            f"&oddsFormat=american&bookmakers={books}"
-        )
-        resp = requests.get(url, timeout=15)
-        requests_used += 1
-        if resp.status_code != 200:
-            continue
-        data = resp.json()
-        game_label = f"{event['away_team']} @ {event['home_team']}"
-
-        for bm in data.get("bookmakers", []):
-            book = bm["key"]
-            for mkt in bm.get("markets", []):
-                if mkt["key"] != "player_goal_scorer":
-                    continue
-                for outcome in mkt.get("outcomes", []):
-                    name  = outcome["name"]
-                    price = outcome["price"]
-                    desc  = (outcome.get("description") or "yes").lower()
-                    is_yes = desc in ("yes", "over", "scorer", "to score")
-
-                    if name not in all_players:
-                        all_players[name] = {"name": name, "game": game_label, "book_odds": {}}
-                    if book not in all_players[name]["book_odds"]:
-                        all_players[name]["book_odds"][book] = {}
-                    if is_yes:
-                        all_players[name]["book_odds"][book]["yes_odds"] = price
-                    else:
-                        all_players[name]["book_odds"][book]["no_odds"] = price
-
-    results = []
-    for p in all_players.values():
-        book_list = [
-            {"book": bk, "yes_odds": v["yes_odds"], "no_odds": v.get("no_odds")}
-            for bk, v in p["book_odds"].items() if "yes_odds" in v
-        ]
-        if not book_list:
-            continue
-
-        cons  = compute_consensus(book_list)
-        sharp = compute_sharp(book_list)
-        score = ml_score(cons, sharp, p["name"])
-
-        best  = max(book_list, key=lambda b: american_to_decimal(b["yes_odds"]))
-        pin   = next((b for b in book_list if b["book"] == "pinnacle"), None)
-        dk    = next((b for b in book_list if b["book"] == "draftkings"), None)
-        fd    = next((b for b in book_list if b["book"] == "fanduel"), None)
-
-        results.append({
-            "name":       p["name"],
-            "game":       p["game"],
-            "score":      score,
-            "consensus":  cons,
-            "sharp":      sharp,
-            "grade":      grade(score),
-            "gpg":        PLAYER_STATS.get(p["name"]),
-            "books":      len(book_list),
-            "book_list":  book_list,
-            "best_odds":  fmt_american(best["yes_odds"]),
-            "best_book":  best["book"],
-            "pinnacle":   fmt_american(pin["yes_odds"]) if pin else "—",
-            "draftkings": fmt_american(dk["yes_odds"])  if dk  else "—",
-            "fanduel":    fmt_american(fd["yes_odds"])  if fd  else "—",
-            "value":      score - cons,
-        })
-
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results, today_str, requests_used
-
-# ─── UI ──────────────────────────────────────────────────────
-st.markdown("""
-<div class="title-block">
-  <div class="title-text">NHL GOALSCORER ML</div>
-  <div class="subtitle-text">TIM HORTONS GAME OPTIMIZER · WEIGHTED CONSENSUS MODEL</div>
-</div>
-""", unsafe_allow_html=True)
-
-# Sidebar / API key
-with st.sidebar:
-    st.markdown("### ⚙️ Settings")
-    api_key = st.text_input(
-        "Odds API Key",
-        type="password",
-        placeholder="Paste key from theOddsAPI.com",
-        help="Free at theOddsAPI.com — 500 requests/month",
-    )
-    st.markdown("---")
-    st.markdown("**How the model works**")
-    st.markdown("""
-- **60%** Weighted consensus  
-  *(Pinnacle 1.0x, DK/FD 0.75x)*
-- **25%** Sharp-book only signal  
-  *(Pinnacle + BetOnline)*
-- **15%** Historical G/GP rate
-
-**Grades**  
-🟢 A+/A = ≥30% — Strong pick  
-🟡 B+/B = 20–30% — Solid  
-🟠 C = 15–20% — Marginal  
-🔴 D = <15% — Skip
-""")
-    st.markdown("---")
-    st.markdown("**Tim Hortons Strategy**")
-    st.markdown("Single pick → A or A+ only  \nMulti-pick → mix 3–4 B+ or higher")
-    st.markdown("---")
-    st.caption("Not gambling advice. Use responsibly.")
-
-# Controls row
-col1, col2, col3 = st.columns([2, 2, 1])
-with col1:
-    min_grade = st.selectbox(
-        "Minimum Grade",
-        ["All", "B (≥20%)", "B+ (≥25%)", "A (≥30%)", "A+ (≥35%)"],
-        index=0,
-    )
-with col2:
-    sort_by = st.selectbox(
-        "Sort By",
-        ["ML Score", "Consensus Probability", "Value Edge"],
-        index=0,
-    )
-with col3:
-    st.markdown("<br>", unsafe_allow_html=True)
-    fetch_btn = st.button("🏒 FETCH", use_container_width=True)
-
-# Grade threshold map
-grade_thresh = {
-    "All": 0.0,
-    "B (≥20%)": 0.20,
-    "B+ (≥25%)": 0.25,
-    "A (≥30%)": 0.30,
-    "A+ (≥35%)": 0.35,
-}
-thresh = grade_thresh[min_grade]
-
-sort_key = {"ML Score": "score", "Consensus Probability": "consensus", "Value Edge": "value"}[sort_by]
-
-# ── Main content
-if not api_key:
-    st.markdown("""
-<div class="warning-box">
-  👆 Add your <strong>Odds API key</strong> in the sidebar to fetch live odds.<br>
-  Get a free key at <strong>theOddsAPI.com</strong> (500 requests/month — enough for daily use).
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown("#### What this app does")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Books Tracked", "12+", "Pinnacle, DK, FD & more")
-    c2.metric("Model Type", "Weighted Consensus", "Vig-removed blend")
-    c3.metric("Refresh Rate", "30 min cache", "Auto-updates")
-
-elif fetch_btn or "results" in st.session_state:
-    if fetch_btn:
-        with st.spinner("Fetching odds from Pinnacle, DraftKings, FanDuel... (30–60 sec)"):
-            try:
-                results, today_str, reqs = fetch_picks(api_key)
-                st.session_state["results"]   = results
-                st.session_state["today_str"] = today_str
-                st.session_state["reqs"]      = reqs
-            except requests.HTTPError as e:
-                st.markdown(f'<div class="error-box">API Error: {e}<br>Check your API key is correct.</div>', unsafe_allow_html=True)
-                st.stop()
-            except Exception as e:
-                st.markdown(f'<div class="error-box">Error: {e}</div>', unsafe_allow_html=True)
-                st.stop()
-
-    results   = st.session_state.get("results", [])
-    today_str = st.session_state.get("today_str", "")
-    reqs      = st.session_state.get("reqs", 0)
-
-    if not results:
-        st.markdown('<div class="warning-box">⚠️ No NHL games found for today. Try again on a game day — props usually post 2–4 hours before puck drop.</div>', unsafe_allow_html=True)
-        st.stop()
-
-    # Filter + sort
-    filtered = [p for p in results if p["score"] >= thresh]
-    filtered.sort(key=lambda x: x[sort_key], reverse=True)
-
-    # ── Top picks banner
-    top3 = filtered[:3]
-    picks_html = "  |  ".join([
-        f"<strong style='color:#f0f0f0'>#{i+1} {p['name']}</strong> "
-        f"<span style='color:{grade_color(p['score'])}'>{p['score']*100:.1f}% · {p['grade']}</span>"
-        for i, p in enumerate(top3)
-    ])
-    st.markdown(f"""
-<div class="top-picks-bar">
-  <div class="top-picks-label">⚡ TODAY'S TIM HORTONS PICKS — {today_str}</div>
-  <div style="font-size:0.9rem">{picks_html}</div>
-</div>
-""", unsafe_allow_html=True)
-
-    # ── Summary metrics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Players Found", len(results))
-    m2.metric("After Filter", len(filtered))
-    m3.metric("Top Pick", top3[0]["name"].split()[-1] if top3 else "—")
-    m4.metric("Top Score", f"{top3[0]['score']*100:.1f}%" if top3 else "—")
-
-    st.markdown("---")
-
-    # ── Player cards
-    for i, p in enumerate(filtered):
-        col = grade_color(p["score"])
-        pct_class = "pct-high" if p["score"] >= 0.30 else ("pct-mid" if p["score"] >= 0.20 else "pct-low")
-        sharp_str = f"{p['sharp']*100:.1f}%" if p["sharp"] else "N/A"
-        gpg_str   = f"{p['gpg']:.2f}" if p["gpg"] else "—"
-        val_str   = f"+{p['value']*100:.1f}%" if p["value"] > 0.02 else (f"{p['value']*100:.1f}%" if p["value"] < -0.02 else "~fair")
-
-        with st.expander(
-            f"{'🥇' if i==0 else '🥈' if i==1 else '🥉' if i==2 else f'#{i+1}'}  "
-            f"{p['name']}  ·  {p['score']*100:.1f}%  ·  Grade {p['grade']}  ·  {p['game']}",
-            expanded=(i < 3),
-        ):
-            r1c1, r1c2, r1c3, r1c4, r1c5 = st.columns(5)
-            r1c1.metric("ML Score",   f"{p['score']*100:.1f}%")
-            r1c2.metric("Consensus",  f"{p['consensus']*100:.1f}%")
-            r1c3.metric("Sharp",      sharp_str)
-            r1c4.metric("G/GP",       gpg_str)
-            r1c5.metric("Value Edge", val_str)
-
-            st.markdown("**Book Lines**")
-            badges = ""
-            for b in sorted(p["book_list"], key=lambda x: -(BOOK_WEIGHTS.get(x["book"], 0.5))):
-                cls   = "book-sharp" if b["book"] in SHARP_BOOKS else "book-normal"
-                label = b["book"].replace("_us","").replace("williamhill","wh")
-                odds  = fmt_american(b["yes_odds"])
-                badges += f'<span class="book-badge {cls}">{label}: {odds}</span>'
-            st.markdown(badges, unsafe_allow_html=True)
-
-            bc1, bc2 = st.columns(2)
-            bc1.markdown(f"**Best Available:** `{p['best_odds']}` @ {p['best_book']}")
-            bc2.markdown(f"**Books Covering:** {p['books']} sportsbooks")
-
-    st.markdown("---")
-    st.caption(f"Data cached 30 min · API requests used this session: {reqs} · Not gambling advice")
+## Tim Hortons Strategy
+- **Single pick days:** Grade A or A+ only
+- **Multi-pick days:** Combine 3–4 players graded B+ or higher
+- Props usually post **2–4 hours before puck drop**
