@@ -250,9 +250,11 @@ def fetch_picks(api_key: str, target_date: str):
 
     # 2. FETCH EVENTS
     events_url = f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}"
-    r = requests.get(events_url, timeout=15)
+    r = requests.get(events_url, timeout=60)
     r.raise_for_status()
     events = r.json()
+
+    st.session_state["raw_events_json"] = events
 
     # --- DEBUG SECTION: POPULATE THE BOXES ---
     # This captures EVERY date the API is offering before we filter them
@@ -340,6 +342,8 @@ def fetch_picks(api_key: str, target_date: str):
             "best_book": best["book"], "value": score - cons,
         })
 
+    st.session_state["raw_odds_json"] = raw_odds_data
+    
     results.sort(key=lambda x: x["score"], reverse=True)
     return results, target_date, requests_used
 
@@ -579,3 +583,25 @@ elif fetch_btn or "results" in st.session_state:
 
     st.markdown("---")
     st.caption(f"Data cached 30 min · API requests used this session: {reqs} · Not gambling advice")
+
+
+# ─── INVESTIGATION PANEL ─────────────────────────────────────
+st.markdown("---")
+with st.expander("🛠️ API INVESTIGATION & RAW DATA"):
+    st.write("Use this section to see exactly what the API sent back.")
+    
+    if "raw_events_json" not in st.session_state:
+        st.info("No data fetched yet. Click 'FETCH' to see raw API responses.")
+    else:
+        tab1, tab2 = st.tabs(["📅 Raw Events (Schedule)", "🏒 Raw Odds (Player Props)"])
+        
+        with tab1:
+            st.markdown("**All events returned for the NHL:**")
+            st.json(st.session_state["raw_events_json"])
+            
+        with tab2:
+            st.markdown("**Player prop data for filtered games:**")
+            if not st.session_state.get("raw_odds_json"):
+                st.warning("No player props found. This usually means the books haven't posted them yet.")
+            else:
+                st.json(st.session_state["raw_odds_json"])
