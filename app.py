@@ -233,40 +233,42 @@ def fmt_american(a):
     return f"+{a}" if a > 0 else str(a)
 
 # ─── API ─────────────────────────────────────────────────────
-def fetch_picks(api_key: str):
+def fetch_picks(api_key: str, target_date: str):
+    """target_date: YYYY-MM-DD in ET — we also check the UTC equivalent (±1 day)."""
     import datetime as dt
-    et = pytz.timezone("America/Toronto")
-    now_et       = datetime.now(et)
-    now_utc      = datetime.now(timezone.utc)
-    today_str    = now_et.strftime("%Y-%m-%d")
-    today_utc    = now_utc.strftime("%Y-%m-%d")
-    tomorrow_str = (now_et + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Build a set of UTC dates to match against (target date ± 1 day covers all timezones)
+    td = dt.datetime.strptime(target_date, "%Y-%m-%d")
+    date_window = {
+        (td + dt.timedelta(days=d)).strftime("%Y-%m-%d")
+        for d in (-1, 0, 1)
+    }
 
     events_url = f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}"
     r = requests.get(events_url, timeout=15)
     r.raise_for_status()
     events = r.json()
 
-    # Capture quota from response headers (the-odds-api sends these on every call)
+    # Capture quota from response headers
     try:
         st.session_state["quota_used"]      = int(r.headers.get("x-requests-used", 0))
         st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
     except Exception:
         pass
 
-    # Debug: store what dates the API actually returned
+    # Debug info
     all_dates = sorted(set(e["commence_time"][:10] for e in events)) if events else []
     st.session_state["debug_dates"]        = all_dates
-    st.session_state["debug_today"]        = today_str
+    st.session_state["debug_today"]        = target_date
     st.session_state["debug_total_events"] = len(events)
 
-    # Match today OR tomorrow UTC — evening ET games often appear as next UTC day
+    # Match events whose UTC commence date falls within our ±1 day window
     today_events = [
         e for e in events
-        if e["commence_time"][:10] in (today_str, today_utc, tomorrow_str)
+        if e["commence_time"][:10] in date_window
     ]
     if not today_events:
-        return [], today_str, 0
+        return [], target_date, 0
 
     books = ",".join(BOOK_WEIGHTS.keys())
     all_players = {}
@@ -419,8 +421,29 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Not gambling advice. Use responsibly.")
 
+# ── Date options
+import datetime as _dt
+_et   = pytz.timezone("America/Toronto")
+_now  = datetime.now(_et)
+_d0   = _now.strftime("%Y-%m-%d")
+_d1   = (_now + _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+_d2   = (_now + _dt.timedelta(days=2)).strftime("%Y-%m-%d")
+
+_date_labels = {
+    f"Today ({_d0})": _d0,
+    f"{_d1}": _d1,
+    f"{_d2}": _d2,
+}
+
 # Controls row
-col1, col2, col3 = st.columns([2, 2, 1])
+col0, col1, col2, col3 = st.columns([2, 2, 2, 1])
+with col0:
+    selected_date_label = st.selectbox(
+        "Game Date",
+        list(_date_labels.keys()),
+        index=0,
+    )
+    selected_date = _date_labels[selected_date_label]
 with col1:
     min_grade = st.selectbox(
         "Minimum Grade",
@@ -470,7 +493,7 @@ elif fetch_btn or "results" in st.session_state:
             st.session_state.pop(_k, None)
         with st.spinner("Fetching odds from Pinnacle, DraftKings, FanDuel... (30–60 sec)"):
             try:
-                results, today_str, reqs = fetch_picks(api_key)
+                results, today_str, reqs = fetch_picks(api_key, selected_date)
                 st.session_state["results"]   = results
                 st.session_state["today_str"] = today_str
                 st.session_state["reqs"]      = reqs
