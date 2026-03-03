@@ -24,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("# NHL GOAL PROBABILITIES")
-st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS MARKET · OVER 0.5</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>PINNACLE · PLAYER_GOALS MARKET · OVER 0.5</p>", unsafe_allow_html=True)
 
 # ── Sidebar
 with st.sidebar:
@@ -276,4 +276,4 @@ if fetch_btn or "pin_results" in st.session_state:
     """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.caption(f"Source: FanDuel · Market: player_goals · Requests used: {reqs} · Not gambling advice")
+    st.caption(f"Source: Pinnacle · Market: player_goals · Requests used: {reqs} · Not gambling advice")
