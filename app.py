@@ -150,6 +150,7 @@ def fetch_data(api_key, target_date):
             pass
 
         if resp.status_code != 200:
+            st.warning(f"Failed to fetch {away} @ {home}: status {resp.status_code}")
             continue
 
         for bm in resp.json().get("bookmakers", []):
