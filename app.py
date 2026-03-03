@@ -278,7 +278,8 @@ def fetch_picks(api_key: str, target_date: str):
         url = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
             f"?apiKey={api_key}&regions=us,eu&markets=player_goal_scorer"
-            f"&oddsFormat=american&bookmakers={books}"
+            # f"&oddsFormat=american&bookmakers={books}"
+            f"&oddsFormat=american&regions=us"
         )
         resp = requests.get(url, timeout=15)
         requests_used += 1
