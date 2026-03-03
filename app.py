@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 from datetime import datetime
 import pytz
+import datetime as dt
 
 st.set_page_config(page_title="NHL Goal Probabilities", page_icon="🏒", layout="wide")
 
@@ -40,29 +41,34 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("**API Quota**")
         st.markdown(f"<div style='font-family:monospace;color:{col};font-size:0.75rem'>{bar}</div>", unsafe_allow_html=True)
-        st.markdown(f"<span style='color:{col};font-weight:700'>{quota_used}</span><span style='color:#555'> / 500 &nbsp;·&nbsp; </span><span style='color:#00ff9d;font-weight:700'>{quota_rem} left</span>", unsafe_allow_html=True)
-        if quota_rem <= 50: st.warning(f"Only {quota_rem} requests left!")
+        st.markdown(
+            f"<span style='color:{col};font-weight:700'>{quota_used}</span>"
+            f"<span style='color:#555'> / 500 &nbsp;·&nbsp; </span>"
+            f"<span style='color:#00ff9d;font-weight:700'>{quota_rem} left</span>",
+            unsafe_allow_html=True
+        )
+        if quota_rem is not None and quota_rem <= 50:
+            st.warning(f"Only {quota_rem} requests left!")
 
 # ── Date picker
-import datetime as _dt
-_et  = pytz.timezone("America/Toronto")
-_now = datetime.now(_et)
-_d0  = _now.strftime("%Y-%m-%d")
-_d1  = (_now + _dt.timedelta(days=1)).strftime("%Y-%m-%d")
-_d2  = (_now + _dt.timedelta(days=2)).strftime("%Y-%m-%d")
-_date_labels = {f"Today ({_d0})": _d0, _d1: _d1, _d2: _d2}
+TZ = pytz.timezone("America/Toronto")
+now_et = datetime.now(TZ)
+d0 = now_et.strftime("%Y-%m-%d")
+d1 = (now_et + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+d2 = (now_et + dt.timedelta(days=2)).strftime("%Y-%m-%d")
+date_options = {f"Today ({d0})": d0, d1: d1, d2: d2}
 
 col_date, col_btn = st.columns([3, 1])
 with col_date:
-    selected_label = st.selectbox("Game Date", list(_date_labels.keys()), index=0)
-    selected_date  = _date_labels[selected_label]
+    selected_label = st.selectbox("Game Date", list(date_options.keys()), index=0)
+    selected_date  = date_options[selected_label]
 with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
     fetch_btn = st.button("FETCH", use_container_width=True)
 
 st.markdown("---")
 
-# ── Fetch
+# ── Helper functions
 def american_to_implied(a):
     dec = (a / 100 + 1) if a > 0 else (100 / abs(a) + 1)
     return 1 / dec
@@ -70,11 +76,15 @@ def american_to_implied(a):
 def remove_vig(yes_p, no_p):
     return yes_p / (yes_p + no_p)
 
-def fetch_data(api_key, target_date):
-    import datetime as dt
-    tz = pytz.timezone("America/Toronto")
+def utc_str_to_et_date(utc_str):
+    """Convert '2026-03-03T23:00:00Z' to ET date string 'YYYY-MM-DD'."""
+    utc_dt = dt.datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+    return utc_dt.astimezone(TZ).strftime("%Y-%m-%d")
 
-    # Get all NHL events
+# ── Main fetch function
+def fetch_data(api_key, target_date):
+
+    # Step 1: get all upcoming NHL events
     r = requests.get(
         f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}",
         timeout=60
@@ -88,41 +98,31 @@ def fetch_data(api_key, target_date):
     except Exception:
         pass
 
-    # Filter to selected ET date
-    today_events = []
-    for e in events:
-        import datetime as dt2
-        utc_t    = dt2.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
-        et_date  = utc_t.astimezone(tz).strftime("%Y-%m-%d")
-        if et_date == target_date:
-            today_events.append(e)
+    # Step 2: show ALL ET dates available so we can debug
+    all_et_dates = sorted(set(utc_str_to_et_date(e["commence_time"]) for e in events))
 
-    all_dates = sorted(set(
-        dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ")
-        .replace(tzinfo=pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
-        for e in events
-    ))
+    # Step 3: filter to selected ET date
+    today_events = [e for e in events if utc_str_to_et_date(e["commence_time"]) == target_date]
 
     if not today_events:
-        return [], 1, all_dates, []
+        return [], 1, all_et_dates, [], []
 
-    players   = {}
-    req_count = 1
-    raw       = []
-
-    # Track all bookmakers and markets seen across all responses
-    seen_bookmakers = []
-    seen_markets    = []
+    # Step 4: fetch props — no bookmaker filter so we can see ALL books + markets
+    players    = {}
+    req_count  = 1
+    raw        = []
+    seen_books = []
+    seen_mkts  = []
 
     for event in today_events:
-        # Step A: fetch with NO bookmaker filter and ALL regions to see everything available
-        url_discover = (
+        url = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us,eu,uk,au"
+            f"?apiKey={api_key}"
+            f"&regions=us,eu,uk,au"
             f"&markets=player_goals,player_goal_scorer,player_goals_scored,player_anytime_goal_scorer,player_to_score"
             f"&oddsFormat=american"
         )
-        resp = requests.get(url_discover, timeout=30)
+        resp = requests.get(url, timeout=30)
         req_count += 1
         if resp.status_code != 200:
             continue
@@ -131,34 +131,26 @@ def fetch_data(api_key, target_date):
         raw.append(data)
         game = f"{event['away_team']} @ {event['home_team']}"
 
-        # Catalog every bookmaker and market key we receive
+        # Catalog everything returned
         for bm in data.get("bookmakers", []):
             bk = bm["key"]
-            if bk not in seen_bookmakers:
-                seen_bookmakers.append(bk)
+            if bk not in seen_books:
+                seen_books.append(bk)
             for mkt in bm.get("markets", []):
-                mk = mkt["key"]
-                entry = f"{bk}:{mk}"
-                if entry not in seen_markets:
-                    seen_markets.append(entry)
+                entry = f"{bk}:{mkt['key']}"
+                if entry not in seen_mkts:
+                    seen_mkts.append(entry)
 
-        # Now extract Pinnacle goal props (try all goal market keys)
-        goal_market_keys = {
-            "player_goals", "player_goal_scorer", "player_goals_scored",
-            "player_anytime_goal_scorer", "player_to_score",
-        }
+        # Extract Pinnacle only
         for bm in data.get("bookmakers", []):
             if bm["key"] != "pinnacle":
                 continue
             for mkt in bm.get("markets", []):
-                if mkt["key"] not in goal_market_keys:
-                    continue
                 by_player = {}
                 for outcome in mkt.get("outcomes", []):
                     name  = outcome["name"]
                     price = outcome["price"]
                     desc  = (outcome.get("description") or "").lower()
-                    point = outcome.get("point", None)
                     if name not in by_player:
                         by_player[name] = {}
                     if desc == "over":
@@ -186,13 +178,10 @@ def fetch_data(api_key, target_date):
                         "under": odds.get("under"),
                     }
 
-    st.session_state["debug_seen_bookmakers"] = seen_bookmakers
-    st.session_state["debug_seen_markets"]    = seen_markets
-
     results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
-    return results, req_count, all_dates, raw
+    return results, req_count, all_et_dates, seen_books, seen_mkts
 
-# ── Main display
+# ── Display
 if not api_key:
     st.info("Add your the-odds-api.com key in the sidebar, then click FETCH.")
     st.stop()
@@ -202,78 +191,89 @@ if fetch_btn or "pin_results" in st.session_state:
         st.session_state.pop("pin_results", None)
         with st.spinner("Fetching Pinnacle player_goals odds..."):
             try:
-                results, reqs, all_dates, raw = fetch_data(api_key, selected_date)
-                st.session_state["pin_results"]  = results
-                st.session_state["pin_reqs"]     = reqs
-                st.session_state["pin_dates"]    = all_dates
-                st.session_state["pin_raw"]      = raw
-                st.session_state["pin_date_sel"] = selected_date
+                results, reqs, all_dates, seen_books, seen_mkts = fetch_data(api_key, selected_date)
+                st.session_state["pin_results"]   = results
+                st.session_state["pin_reqs"]      = reqs
+                st.session_state["pin_dates"]     = all_dates
+                st.session_state["pin_date_sel"]  = selected_date
+                st.session_state["pin_books"]     = seen_books
+                st.session_state["pin_mkts"]      = seen_mkts
             except requests.HTTPError as e:
                 st.error(f"API error: {e} — check your key")
                 st.stop()
             except Exception as e:
-                st.error(f"Error: {e}")
+                import traceback
+                st.error(f"Error: {e}\n\n{traceback.format_exc()}")
                 st.stop()
 
-    results     = st.session_state.get("pin_results", [])
-    reqs        = st.session_state.get("pin_reqs", 0)
-    all_dates   = st.session_state.get("pin_dates", [])
-    date_sel    = st.session_state.get("pin_date_sel", selected_date)
+    results    = st.session_state.get("pin_results", [])
+    reqs       = st.session_state.get("pin_reqs", 0)
+    all_dates  = st.session_state.get("pin_dates", [])
+    date_sel   = st.session_state.get("pin_date_sel", selected_date)
+    seen_books = st.session_state.get("pin_books", [])
+    seen_mkts  = st.session_state.get("pin_mkts", [])
 
-    # ── Debug expander
-    with st.expander("Debug info — open this if no players appear"):
+    # Debug panel
+    with st.expander("Debug info (open if no players appear)"):
         st.write(f"**Selected date (ET):** `{date_sel}`")
-        st.write(f"**Dates with NHL games in API:** {all_dates}")
-        st.write(f"**Players found:** {len(results)}")
-        st.write(f"**API requests used this fetch:** {reqs}")
-        st.markdown("---")
-        st.markdown("**Bookmakers that returned ANY data:**")
-        st.write(st.session_state.get("debug_seen_bookmakers", []))
-        st.markdown("**All bookmaker:market combinations returned:**")
-        st.write(st.session_state.get("debug_seen_markets", []))
-        st.caption("If 'pinnacle' is not in the bookmakers list above, the API does not have Pinnacle props for this sport/market. Share this with Claude to diagnose.")
-        if st.checkbox("Show full raw JSON"):
+        st.write(f"**All ET dates with games in API:** {all_dates}")
+        st.write(f"**Games on selected date:** {len([e for e in st.session_state.get('pin_dates', []) if e == date_sel])}")
+        st.write(f"**All bookmakers returned:** {seen_books}")
+        st.write(f"**All book:market combinations:** {seen_mkts}")
+        st.write(f"**Players parsed:** {len(results)}")
+        st.write(f"**API requests used:** {reqs}")
+        st.caption("Key check: does 'pinnacle' appear in bookmakers? If not, Pinnacle props may require a paid API tier.")
+        if st.checkbox("Show raw JSON"):
             st.json(st.session_state.get("pin_raw", []))
 
-    if not results:
-        st.warning(f"No Pinnacle player_goals props found for **{date_sel}**. Either no games are scheduled, or Pinnacle hasn't posted lines yet (usually 2-4 hrs before puck drop).")
+    # No games at all
+    games_today = [d for d in all_dates if d == date_sel]
+    if not games_today:
+        st.warning(f"No NHL games found for **{date_sel}**. Available dates: {all_dates}")
         st.stop()
 
-    st.markdown(f"**{len(results)} players** found for **{date_sel}** — sorted by goal probability")
+    # Games found but no props
+    if not results:
+        st.warning(
+            f"Games found for **{date_sel}** but no Pinnacle player props returned.  \n"
+            f"Books available: `{seen_books}`  \n"
+            f"Markets available: `{seen_mkts}`  \n\n"
+            f"If `pinnacle` is not in the books list, the free API tier may not include Pinnacle player props."
+        )
+        st.stop()
+
+    # Results table
+    st.markdown(f"**{len(results)} players** from Pinnacle for **{date_sel}** — sorted by goal probability")
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Build HTML table
     rows = ""
     for i, p in enumerate(results):
-        pct      = p["prob"] * 100
-        bar_w    = min(int(p["prob"] * 240), 240)
-        bar_col  = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else ("#FF9933" if pct >= 15 else "#ff6b6b"))
-        over_str = f"+{p['over']}" if p["over"] > 0 else str(p["over"])
-        under_str = (f"+{p['under']}" if p["under"] and p["under"] > 0 else str(p["under"])) if p["under"] else "—"
+        pct     = p["prob"] * 100
+        bar_w   = min(int(p["prob"] * 240), 240)
+        bar_col = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else ("#FF9933" if pct >= 15 else "#ff6b6b"))
+        over_s  = f"+{p['over']}" if p["over"] > 0 else str(p["over"])
+        under_s = (f"+{p['under']}" if p["under"] and p["under"] > 0 else str(p["under"])) if p["under"] else "—"
         rank_col = "#00ff9d" if i < 3 else "#444"
 
-        rows += f"""
-        <tr>
-          <td style='color:{rank_col};font-weight:700'>{i+1}</td>
-          <td style='font-weight:{"700" if i < 5 else "400"};color:#f0f0f0'>{p['name']}</td>
-          <td style='color:#888;font-size:0.78rem'>{p['game']}</td>
-          <td style='font-weight:700;color:{bar_col}'>{pct:.1f}%
-            <span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span>
-          </td>
-          <td style='color:#aaa;font-family:monospace'>{over_str}</td>
-          <td style='color:#555;font-family:monospace'>{under_str}</td>
-        </tr>"""
+        rows += (
+            "<tr>"
+            f"<td style='color:{rank_col};font-weight:700'>{i+1}</td>"
+            f"<td style='font-weight:{'700' if i < 5 else '400'};color:#f0f0f0'>{p['name']}</td>"
+            f"<td style='color:#888;font-size:0.78rem'>{p['game']}</td>"
+            f"<td style='font-weight:700;color:{bar_col}'>{pct:.1f}%"
+            f"<span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span></td>"
+            f"<td style='color:#aaa;font-family:monospace'>{over_s}</td>"
+            f"<td style='color:#555;font-family:monospace'>{under_s}</td>"
+            "</tr>"
+        )
 
-    st.markdown(f"""
-    <table>
-      <thead><tr>
-        <th>#</th><th>PLAYER</th><th>GAME</th>
-        <th>PROB (vig-removed)</th>
-        <th>OVER 0.5</th><th>UNDER 0.5</th>
-      </tr></thead>
-      <tbody>{rows}</tbody>
-    </table>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        "<table><thead><tr>"
+        "<th>#</th><th>PLAYER</th><th>GAME</th>"
+        "<th>PROB (vig-removed)</th><th>OVER 0.5</th><th>UNDER 0.5</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table>",
+        unsafe_allow_html=True
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption(f"Source: Pinnacle · Market: player_goals · Requests used: {reqs} · Not gambling advice")
