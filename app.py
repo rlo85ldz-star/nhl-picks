@@ -139,7 +139,7 @@ def fetch_data(api_key, target_date):
         home = event["home_team"]
         url  = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us"
+            f"?apiKey={api_key}&regions=us,eu,uk,au"
             f"&markets=player_goals"
             f"&oddsFormat=american&bookmakers=fanduel"
         )
@@ -188,6 +188,84 @@ def fetch_data(api_key, target_date):
                         "over":  fmt_odds(odds["over"]),
                         "under": fmt_odds(odds["under"]) if "under" in odds else "—",
                     }
+
+    # Second pass: fetch DraftKings for any games that returned zero FanDuel players
+    games_with_fd = set(p["game"] for p in players.values())
+    games_missing = [e for e in today_events if f"{e['away_team']} @ {e['home_team']}" not in games_with_fd]
+
+    if games_missing:
+        progress2 = st.progress(0, text="Fetching DraftKings for missing games...")
+        for idx, event in enumerate(games_missing):
+            away = event["away_team"]
+            home = event["home_team"]
+            url  = (
+                f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
+                f"?apiKey={api_key}&regions=us,eu,uk,au"
+                f"&markets=player_goals"
+                f"&oddsFormat=american&bookmakers=draftkings"
+            )
+            resp = requests.get(url, timeout=30)
+            req_count += 1
+            progress2.progress((idx + 1) / len(games_missing), text=f"DraftKings: {away} @ {home}...")
+
+            try:
+                st.session_state["quota_used"]      = int(resp.headers.get("x-requests-used", 0))
+                st.session_state["quota_remaining"] = int(resp.headers.get("x-requests-remaining", 500))
+            except Exception:
+                pass
+
+            if resp.status_code != 200:
+                continue
+
+            for bm in resp.json().get("bookmakers", []):
+                if bm["key"] != "draftkings":
+                    continue
+                for mkt in bm.get("markets", []):
+                    if mkt["key"] != "player_goals":
+                        continue
+                    by_player = {}
+                    for outcome in mkt.get("outcomes", []):
+                        name  = outcome.get("description", "")
+                        price = outcome["price"]
+                        side  = outcome["name"].lower()
+                        if not name:
+                            continue
+                        if name not in by_player:
+                            by_player[name] = {}
+                        by_player[name][side] = price
+
+                    for name, odds in by_player.items():
+                        if "over" not in odds:
+                            continue
+                        # Only add if not already in FanDuel
+                        if name.lower() in players:
+                            continue
+                        raw_yes = american_to_implied(odds["over"])
+                        prob    = remove_vig(raw_yes, american_to_implied(odds["under"])) if "under" in odds else raw_yes
+                        players[name.lower()] = {
+                            "name":   name,
+                            "away":   away,
+                            "home":   home,
+                            "date":   target_date,
+                            "prob":   prob,
+                            "over":   fmt_odds(odds["over"]),
+                            "under":  fmt_odds(odds["under"]) if "under" in odds else "—",
+                            "source": "DraftKings",
+                            "fd_over":  "—",
+                            "fd_under": "—",
+                            "dk_over":  fmt_odds(odds["over"]),
+                            "dk_under": fmt_odds(odds["under"]) if "under" in odds else "—",
+                        }
+        progress2.empty()
+
+    # Tag FanDuel players with source fields for table display
+    for k in players:
+        if "source" not in players[k]:
+            players[k]["source"]   = "FanDuel"
+            players[k]["fd_over"]  = players[k]["over"]
+            players[k]["fd_under"] = players[k]["under"]
+            players[k]["dk_over"]  = "—"
+            players[k]["dk_under"] = "—"
 
     progress.empty()
     return players, req_count, all_et_dates
@@ -401,25 +479,34 @@ if fetch_btn or "fd_players" in st.session_state:
         bar_col  = "#16a34a" if pct >= 30 else ("#d97706" if pct >= 20 else ("#ea580c" if pct >= 15 else "#dc2626"))
         rank_col = "#16a34a" if i < 3 else ("#b45309" if i < 10 else "#9ca3af")
         bold     = "700" if i < 5 else "400"
+        src       = p.get("source", "FanDuel")
+        src_color = "#1d4ed8" if src == "FanDuel" else "#7c3aed"
+        fd_over   = p.get("fd_over", p.get("over", "—"))
+        fd_under  = p.get("fd_under", p.get("under", "—"))
+        dk_over   = p.get("dk_over", "—")
+        dk_under  = p.get("dk_under", "—")
         rows += (
             "<tr>"
             f"<td style='color:{rank_col};font-weight:700;width:40px'>{i+1}</td>"
             f"<td style='color:#1a1a2e;font-weight:{bold}'>{p['name']}</td>"
+            f"<td style='font-size:0.72rem;font-weight:600;color:{src_color}'>{src}</td>"
             f"<td style='color:#4b5563;font-size:0.8rem'>{p['away']}</td>"
             f"<td style='color:#9ca3af;font-size:0.75rem;text-align:center'>@</td>"
             f"<td style='color:#4b5563;font-size:0.8rem'>{p['home']}</td>"
             f"<td style='color:#9ca3af;font-size:0.75rem'>{p['date']}</td>"
             f"<td style='font-weight:700;color:{bar_col};white-space:nowrap'>{pct:.1f}%"
             f"<span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span></td>"
-            f"<td style='color:#374151;font-family:monospace;font-size:0.8rem'>{p['over']}</td>"
-            f"<td style='color:#9ca3af;font-family:monospace;font-size:0.8rem'>{p['under']}</td>"
+            f"<td style='color:#1d4ed8;font-family:monospace;font-size:0.8rem'>{fd_over}</td>"
+            f"<td style='color:#93c5fd;font-family:monospace;font-size:0.8rem'>{fd_under}</td>"
+            f"<td style='color:#7c3aed;font-family:monospace;font-size:0.8rem'>{dk_over}</td>"
+            f"<td style='color:#c4b5fd;font-family:monospace;font-size:0.8rem'>{dk_under}</td>"
             "</tr>"
         )
 
     st.markdown(
         "<table><thead><tr>"
-        "<th>#</th><th>PLAYER</th><th>AWAY</th><th></th><th>HOME</th><th>DATE</th>"
-        "<th>PROBABILITY</th><th>OVER 0.5</th><th>UNDER 0.5</th>"
+        "<th>#</th><th>PLAYER</th><th>SOURCE</th><th>AWAY</th><th></th><th>HOME</th><th>DATE</th>"
+        "<th>PROBABILITY</th><th>FD OVER</th><th>FD UNDER</th><th>DK OVER</th><th>DK UNDER</th>"
         f"</tr></thead><tbody>{rows}</tbody></table>",
         unsafe_allow_html=True
     )
