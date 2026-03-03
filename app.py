@@ -236,17 +236,11 @@ def fmt_american(a):
 def fetch_picks(api_key: str, target_date: str):
     """target_date: YYYY-MM-DD in EST."""
     import datetime as dt
-    import requests
-    
+
     # 1. SETUP TIMEZONE BOUNDARIES
+    # Compare event times by converting them to ET date, not UTC date.
+    # This avoids the bug where utc_end spills into the next calendar day.
     tz_est = pytz.timezone("America/Toronto")
-    try:
-        est_start = tz_est.localize(dt.datetime.strptime(target_date, "%Y-%m-%d"))
-        est_end = est_start + dt.timedelta(hours=23, minutes=59, seconds=59)
-        utc_start = est_start.astimezone(pytz.utc)
-        utc_end = est_end.astimezone(pytz.utc)
-    except Exception as e:
-        return [], target_date, 0
 
     # 2. FETCH EVENTS
     events_url = f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}"
@@ -257,21 +251,23 @@ def fetch_picks(api_key: str, target_date: str):
     st.session_state["raw_events_json"] = events
 
     all_api_dates = sorted(set(e["commence_time"][:10] for e in events)) if events else []
-    st.session_state["debug_dates"] = all_api_dates 
+    st.session_state["debug_dates"] = all_api_dates
     st.session_state["debug_today"] = target_date
     st.session_state["debug_total_events_raw"] = len(events)
 
     try:
         st.session_state["quota_used"] = int(r.headers.get("x-requests-used", 0))
         st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
-    except: pass
+    except Exception:
+        pass
 
-    # 3. FILTER EVENTS FOR THE EST DAY
+    # 3. FILTER EVENTS FOR THE SELECTED ET DATE
+    # Convert each event's UTC time to ET, then compare the DATE portion only.
+    # This correctly handles games at 7pm ET (midnight UTC next day) without spillover.
     today_events = []
     for e in events:
-        event_time_utc = dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
-        # if utc_start <= event_time_utc <= utc_end:
-        event_et_date = event_time_utc.astimezone(tz_est).strftime("%Y-%m-%d")
+        event_utc = dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+        event_et_date = event_utc.astimezone(tz_est).strftime("%Y-%m-%d")
         if event_et_date == target_date:
             today_events.append(e)
 
@@ -284,43 +280,66 @@ def fetch_picks(api_key: str, target_date: str):
     books = ",".join(BOOK_WEIGHTS.keys())
     all_players = {}
     requests_used = 1
-    raw_odds_data = [] # Fixed: Initialized the list here
+    raw_odds_data = []
 
     for event in today_events:
+        # Request all known goal-scorer market keys at once so we catch whatever the API uses
+        goal_markets = "player_goals,player_goal_scorer,player_goals_scored,player_anytime_goal_scorer,player_to_score"
         url = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            # f"?apiKey={api_key}&regions=us,eu&markets=player_goal_scorer"
-            f"?apiKey={api_key}&regions=us,eu&markets=player_goals"
+            f"?apiKey={api_key}&regions=us,eu&markets={goal_markets}"
             f"&oddsFormat=american&bookmakers={books}"
         )
         resp = requests.get(url, timeout=15)
         requests_used += 1
-        if resp.status_code != 200: continue
-        
+        if resp.status_code != 200:
+            continue
+
         data = resp.json()
-        raw_odds_data.append(data) # Now this will work!
+        raw_odds_data.append(data)
         game_label = f"{event['away_team']} @ {event['home_team']}"
+
+        # Track which market keys actually came back (for debug)
+        found_mkts = st.session_state.get("debug_found_markets", [])
 
         for bm in data.get("bookmakers", []):
             book = bm["key"]
             for mkt in bm.get("markets", []):
-                # if mkt["key"] != "player_goal_scorer": continue
-                if mkt["key"] != "player_goals": continue
+                mkt_key = mkt["key"]
+                if mkt_key not in found_mkts:
+                    found_mkts.append(mkt_key)
+
+                # Accept any goal-related market
+                goal_market_keys = {
+                    "player_goals", "player_goal_scorer", "player_goals_scored",
+                    "player_anytime_goal_scorer", "player_to_score",
+                }
+                if mkt_key not in goal_market_keys:
+                    continue
+
                 for outcome in mkt.get("outcomes", []):
-                    name = outcome["name"]
+                    name  = outcome["name"]
                     price = outcome["price"]
-                    desc = (outcome.get("description") or "yes").lower()
-                    is_yes = desc in ("yes", "over", "scorer", "to score")
+                    desc  = (outcome.get("description") or "yes").lower()
+                    point = outcome.get("point", None)
+
+                    # Over 0.5 goals = will score; also catch yes/scorer/anytime
+                    if desc == "over" and point is not None:
+                        is_yes = float(point) <= 0.5
+                    else:
+                        is_yes = desc in ("yes", "over", "scorer", "to score", "anytime")
 
                     if name not in all_players:
                         all_players[name] = {"name": name, "game": game_label, "book_odds": {}}
                     if book not in all_players[name]["book_odds"]:
                         all_players[name]["book_odds"][book] = {}
-                    
+
                     if is_yes:
                         all_players[name]["book_odds"][book]["yes_odds"] = price
                     else:
                         all_players[name]["book_odds"][book]["no_odds"] = price
+
+        st.session_state["debug_found_markets"] = found_mkts
 
     # 5. PROCESS RESULTS
     results = []
@@ -329,13 +348,14 @@ def fetch_picks(api_key: str, target_date: str):
             {"book": bk, "yes_odds": v["yes_odds"], "no_odds": v.get("no_odds")}
             for bk, v in p["book_odds"].items() if "yes_odds" in v
         ]
-        if not book_list: continue
+        if not book_list:
+            continue
 
         cons = compute_consensus(book_list)
         sharp = compute_sharp(book_list)
         score = ml_score(cons, sharp, p["name"])
         best = max(book_list, key=lambda b: american_to_decimal(b["yes_odds"]))
-        
+
         results.append({
             "name": p["name"], "game": p["game"], "score": score,
             "consensus": cons, "sharp": sharp, "grade": grade(score),
@@ -345,7 +365,7 @@ def fetch_picks(api_key: str, target_date: str):
         })
 
     st.session_state["raw_odds_json"] = raw_odds_data
-    
+
     results.sort(key=lambda x: x["score"], reverse=True)
     return results, target_date, requests_used
 
@@ -359,7 +379,7 @@ st.markdown("""
 
 # Sidebar / API key
 with st.sidebar:
-    st.markdown("### ⚙️ Settings")
+    st.markdown("### Settings")
     api_key = st.text_input(
         "Odds API Key",
         type="password",
@@ -368,7 +388,7 @@ with st.sidebar:
     )
     st.markdown("---")
 
-    # ── API Quota tracker
+    # API Quota tracker
     quota_used      = st.session_state.get("quota_used", None)
     quota_remaining = st.session_state.get("quota_remaining", None)
     if quota_used is not None:
@@ -378,8 +398,8 @@ with st.sidebar:
         pct_used  = used / total
         bar_color = "#00ff9d" if pct_used < 0.6 else ("#FFE066" if pct_used < 0.85 else "#FF6666")
         bar_filled = int(pct_used * 20)
-        bar = "█" * bar_filled + "░" * (20 - bar_filled)
-        st.markdown("**📊 API Quota (this month)**")
+        bar = "#" * bar_filled + "." * (20 - bar_filled)
+        st.markdown("**API Quota (this month)**")
         st.markdown(
             f"<div style='font-family:monospace;font-size:0.75rem;color:{bar_color}'>{bar}</div>",
             unsafe_allow_html=True,
@@ -393,14 +413,14 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
         if remaining <= 50:
-            st.warning(f"⚠️ Only {remaining} requests left this month!")
+            st.warning(f"Only {remaining} requests left this month!")
         elif remaining <= 100:
             st.markdown(
-                f"<div style='font-size:0.75rem;color:#FFE066'>⚡ {remaining} requests remaining</div>",
+                f"<div style='font-size:0.75rem;color:#FFE066'>{remaining} requests remaining</div>",
                 unsafe_allow_html=True,
             )
     else:
-        st.markdown("**📊 API Quota**")
+        st.markdown("**API Quota**")
         st.caption("Fetch once to see quota")
 
     st.markdown("---")
@@ -413,18 +433,18 @@ with st.sidebar:
 - **15%** Historical G/GP rate
 
 **Grades**  
-🟢 A+/A = ≥30% — Strong pick  
-🟡 B+/B = 20–30% — Solid  
-🟠 C = 15–20% — Marginal  
-🔴 D = <15% — Skip
+A+/A = 30%+ Strong pick  
+B+/B = 20-30% Solid  
+C = 15-20% Marginal  
+D = below 15% Skip
 """)
     st.markdown("---")
     st.markdown("**Tim Hortons Strategy**")
-    st.markdown("Single pick → A or A+ only  \nMulti-pick → mix 3–4 B+ or higher")
+    st.markdown("Single pick: A or A+ only  \nMulti-pick: mix 3-4 B+ or higher")
     st.markdown("---")
     st.caption("Not gambling advice. Use responsibly.")
 
-# ── Date options
+# Date options
 import datetime as _dt
 _et   = pytz.timezone("America/Toronto")
 _now  = datetime.now(_et)
@@ -450,7 +470,7 @@ with col0:
 with col1:
     min_grade = st.selectbox(
         "Minimum Grade",
-        ["All", "B (≥20%)", "B+ (≥25%)", "A (≥30%)", "A+ (≥35%)"],
+        ["All", "B (>=20%)", "B+ (>=25%)", "A (>=30%)", "A+ (>=35%)"],
         index=0,
     )
 with col2:
@@ -461,26 +481,26 @@ with col2:
     )
 with col3:
     st.markdown("<br>", unsafe_allow_html=True)
-    fetch_btn = st.button("🏒 FETCH", use_container_width=True)
+    fetch_btn = st.button("FETCH", use_container_width=True)
 
 # Grade threshold map
 grade_thresh = {
     "All": 0.0,
-    "B (≥20%)": 0.20,
-    "B+ (≥25%)": 0.25,
-    "A (≥30%)": 0.30,
-    "A+ (≥35%)": 0.35,
+    "B (>=20%)": 0.20,
+    "B+ (>=25%)": 0.25,
+    "A (>=30%)": 0.30,
+    "A+ (>=35%)": 0.35,
 }
 thresh = grade_thresh[min_grade]
 
 sort_key = {"ML Score": "score", "Consensus Probability": "consensus", "Value Edge": "value"}[sort_by]
 
-# ── Main content
+# Main content
 if not api_key:
     st.markdown("""
 <div class="warning-box">
-  👆 Add your <strong>Odds API key</strong> in the sidebar to fetch live odds.<br>
-  Get a free key at <strong>the-odds-api.com</strong> (500 requests/month — enough for daily use).
+  Add your Odds API key in the sidebar to fetch live odds.
+  Get a free key at the-odds-api.com (500 requests/month).
 </div>
 """, unsafe_allow_html=True)
 
@@ -492,9 +512,9 @@ if not api_key:
 
 elif fetch_btn or "results" in st.session_state:
     if fetch_btn:
-        for _k in ["results","today_str","reqs"]:
+        for _k in ["results", "today_str", "reqs"]:
             st.session_state.pop(_k, None)
-        with st.spinner("Fetching odds from Pinnacle, DraftKings, FanDuel... (30–60 sec)"):
+        with st.spinner("Fetching odds from Pinnacle, DraftKings, FanDuel... (30-60 sec)"):
             try:
                 results, today_str, reqs = fetch_picks(api_key, selected_date)
                 st.session_state["results"]   = results
@@ -511,84 +531,101 @@ elif fetch_btn or "results" in st.session_state:
     today_str = st.session_state.get("today_str", "")
     reqs      = st.session_state.get("reqs", 0)
 
-    # ─── INVESTIGATION PANEL (MOVED HERE) ────────────────────────
+    # Investigation panel
     st.markdown("---")
-    with st.expander("🛠️ API INVESTIGATION & RAW DATA"):
+    with st.expander("API Investigation & Raw Data"):
         st.write("Use this section to see exactly what the API sent back.")
-        
+
         if "raw_events_json" not in st.session_state:
-            st.info("No data fetched yet. Click 'FETCH' to see raw API responses.")
+            st.info("No data fetched yet. Click FETCH to see raw API responses.")
         else:
-            tab1, tab2 = st.tabs(["📅 Raw Events (Schedule)", "🏒 Raw Odds (Player Props)"])
-            
+            tab1, tab2 = st.tabs(["Raw Events (Schedule)", "Raw Odds (Player Props)"])
+
             with tab1:
                 st.markdown("**All events returned for the NHL:**")
                 st.json(st.session_state["raw_events_json"])
-                
+
             with tab2:
                 st.markdown("**Player prop data for filtered games:**")
                 if not st.session_state.get("raw_odds_json"):
-                    st.warning("No player props found. This usually means the books haven't posted them yet.")
+                    st.warning("No player props found. This usually means the books have not posted them yet.")
                 else:
                     st.json(st.session_state["raw_odds_json"])
     st.markdown("---")
-    # ─────────────────────────────────────────────────────────────
-    
+
+    debug_events = st.session_state.get("debug_total_events", 0)
+    debug_dates  = st.session_state.get("debug_dates", [])
+    debug_today  = st.session_state.get("debug_today", "")
+
+    if debug_events == 0:
+        # No games scheduled on this date at all
+        st.markdown('<div class="warning-box">No NHL games scheduled for ' + debug_today + '. Try a different date.</div>', unsafe_allow_html=True)
+        with st.expander("Debug info"):
+            st.write(f"**Selected date:** `{debug_today}`")
+            st.write(f"**Dates with games in API:** {debug_dates}")
+        st.stop()
+
     if not results:
-        debug_dates = st.session_state.get("debug_dates", [])
-        debug_today = st.session_state.get("debug_today", "")
-        debug_total = st.session_state.get("debug_total_events", 0)
-        st.markdown('<div class="warning-box">⚠️ No NHL games found for today. Props usually post 2-4 hours before puck drop.</div>', unsafe_allow_html=True)
-        with st.expander("🔍 Debug info — click to diagnose"):
-            st.write(f"**App thinks today is:** `{debug_today}` (Eastern Time)")
-            st.write(f"**Total events returned by API:** {debug_total}")
-            st.write(f"**Game dates in API response:** {debug_dates}")
-            st.info("If your date is missing above, share this info so we can fix it.")
+        # Games found but no player props returned yet
+        st.markdown('<div class="warning-box">' + str(debug_events) + ' game(s) found for ' + debug_today + ' but no player props posted yet. Books usually post props 2-4 hours before puck drop. Try again later.</div>', unsafe_allow_html=True)
+        with st.expander("Debug info"):
+            st.write(f"**Selected date:** `{debug_today}`")
+            st.write(f"**Games found:** {debug_events}")
+            st.write(f"**Market keys returned by API:** {st.session_state.get('debug_found_markets', [])}")
+            st.write(f"**Odds API responses received:** {len(st.session_state.get('raw_odds_json', []))}")
+            st.info("If 'Market keys' is empty or missing goal markets, the books have not posted props yet.")
         st.stop()
 
     # Filter + sort
     filtered = [p for p in results if p["score"] >= thresh]
     filtered.sort(key=lambda x: x[sort_key], reverse=True)
 
-    # ── Top picks banner
+    # Top picks banner
     top3 = filtered[:3]
-    picks_html = "  |  ".join([
-        f"<strong style='color:#f0f0f0'>#{i+1} {p['name']}</strong> "
-        f"<span style='color:{grade_color(p['score'])}'>{p['score']*100:.1f}% · {p['grade']}</span>"
-        for i, p in enumerate(top3)
-    ])
-    st.markdown(f"""
-<div class="top-picks-bar">
-  <div class="top-picks-label">⚡ TODAY'S TIM HORTONS PICKS — {today_str}</div>
-  <div style="font-size:0.9rem">{picks_html}</div>
-</div>
-""", unsafe_allow_html=True)
+    picks_parts = []
+    for i, p in enumerate(top3):
+        gc = grade_color(p["score"])
+        sc = "{:.1f}".format(p["score"] * 100)
+        picks_parts.append(
+            "<strong style='color:#f0f0f0'>#" + str(i+1) + " " + p["name"] + "</strong> "
+            + "<span style='color:" + gc + "'>" + sc + "% - " + p["grade"] + "</span>"
+        )
+    picks_html = "  |  ".join(picks_parts)
 
-    # ── Summary metrics
+    st.markdown(
+        "<div class='top-picks-bar'>"
+        "<div class='top-picks-label'>TODAY'S TIM HORTONS PICKS - " + today_str + "</div>"
+        "<div style='font-size:0.9rem'>" + picks_html + "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Summary metrics
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Players Found", len(results))
     m2.metric("After Filter", len(filtered))
-    m3.metric("Top Pick", top3[0]["name"].split()[-1] if top3 else "—")
-    m4.metric("Top Score", f"{top3[0]['score']*100:.1f}%" if top3 else "—")
+    m3.metric("Top Pick", top3[0]["name"].split()[-1] if top3 else "-")
+    m4.metric("Top Score", "{:.1f}%".format(top3[0]["score"] * 100) if top3 else "-")
 
     st.markdown("---")
 
-    # ── Player cards
+    # Player cards
     for i, p in enumerate(filtered):
-        col = grade_color(p["score"])
-        pct_class = "pct-high" if p["score"] >= 0.30 else ("pct-mid" if p["score"] >= 0.20 else "pct-low")
-        sharp_str = f"{p['sharp']*100:.1f}%" if p["sharp"] else "N/A"
-        gpg_str   = f"{p['gpg']:.2f}" if p["gpg"] else "—"
-        val_str   = f"+{p['value']*100:.1f}%" if p["value"] > 0.02 else (f"{p['value']*100:.1f}%" if p["value"] < -0.02 else "~fair")
+        sharp_str = "{:.1f}%".format(p["sharp"] * 100) if p["sharp"] else "N/A"
+        gpg_str   = "{:.2f}".format(p["gpg"]) if p["gpg"] else "-"
+        val_str   = ("+{:.1f}%".format(p["value"] * 100) if p["value"] > 0.02
+                     else ("{:.1f}%".format(p["value"] * 100) if p["value"] < -0.02
+                           else "~fair"))
+        rank = "#1" if i == 0 else "#2" if i == 1 else "#3" if i == 2 else "#" + str(i+1)
 
         with st.expander(
-            f"{'🥇' if i==0 else '🥈' if i==1 else '🥉' if i==2 else f'#{i+1}'}  "
-            f"{p['name']}  ·  {p['score']*100:.1f}%  ·  Grade {p['grade']}  ·  {p['game']}",
+            rank + "  " + p["name"] + "  -  " + "{:.1f}%".format(p["score"] * 100)
+            + "  -  Grade " + p["grade"] + "  -  " + p["game"],
             expanded=(i < 3),
         ):
             r1c1, r1c2, r1c3, r1c4, r1c5 = st.columns(5)
-            r1c1.metric("ML Score",   f"{p['score']*100:.1f}%")
-            r1c2.metric("Consensus",  f"{p['consensus']*100:.1f}%")
+            r1c1.metric("ML Score",   "{:.1f}%".format(p["score"] * 100))
+            r1c2.metric("Consensus",  "{:.1f}%".format(p["consensus"] * 100))
             r1c3.metric("Sharp",      sharp_str)
             r1c4.metric("G/GP",       gpg_str)
             r1c5.metric("Value Edge", val_str)
@@ -597,9 +634,9 @@ elif fetch_btn or "results" in st.session_state:
             badges = ""
             for b in sorted(p["book_list"], key=lambda x: -(BOOK_WEIGHTS.get(x["book"], 0.5))):
                 cls   = "book-sharp" if b["book"] in SHARP_BOOKS else "book-normal"
-                label = b["book"].replace("_us","").replace("williamhill","wh")
+                label = b["book"].replace("_us", "").replace("williamhill", "wh")
                 odds  = fmt_american(b["yes_odds"])
-                badges += f'<span class="book-badge {cls}">{label}: {odds}</span>'
+                badges += "<span class='book-badge " + cls + "'>" + label + ": " + odds + "</span>"
             st.markdown(badges, unsafe_allow_html=True)
 
             bc1, bc2 = st.columns(2)
@@ -608,25 +645,3 @@ elif fetch_btn or "results" in st.session_state:
 
     st.markdown("---")
     st.caption(f"Data cached 30 min · API requests used this session: {reqs} · Not gambling advice")
-
-
-# # ─── INVESTIGATION PANEL ─────────────────────────────────────
-# st.markdown("---")
-# with st.expander("🛠️ API INVESTIGATION & RAW DATA"):
-#     st.write("Use this section to see exactly what the API sent back.")
-    
-#     if "raw_events_json" not in st.session_state:
-#         st.info("No data fetched yet. Click 'FETCH' to see raw API responses.")
-#     else:
-#         tab1, tab2 = st.tabs(["📅 Raw Events (Schedule)", "🏒 Raw Odds (Player Props)"])
-        
-#         with tab1:
-#             st.markdown("**All events returned for the NHL:**")
-#             st.json(st.session_state["raw_events_json"])
-            
-#         with tab2:
-#             st.markdown("**Player prop data for filtered games:**")
-#             if not st.session_state.get("raw_odds_json"):
-#                 st.warning("No player props found. This usually means the books haven't posted them yet.")
-#             else:
-#                 st.json(st.session_state["raw_odds_json"])
