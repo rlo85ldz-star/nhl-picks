@@ -148,7 +148,7 @@ def fetch_data(api_key, target_date):
             "player_anytime_goal_scorer", "player_to_score",
         }
         for bm in data.get("bookmakers", []):
-            if bm["key"] != "fanduel":
+            if bm["key"] != "pinnacle":
                 continue
             for mkt in bm.get("markets", []):
                 if mkt["key"] not in goal_market_keys:
