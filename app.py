@@ -287,7 +287,8 @@ def fetch_picks(api_key: str, target_date: str):
     for event in today_events:
         url = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us,eu&markets=player_goal_scorer"
+            # f"?apiKey={api_key}&regions=us,eu&markets=player_goal_scorer"
+            f"?apiKey={api_key}&regions=us,eu&markets=player_goals"
             f"&oddsFormat=american&bookmakers={books}"
         )
         resp = requests.get(url, timeout=15)
@@ -301,7 +302,8 @@ def fetch_picks(api_key: str, target_date: str):
         for bm in data.get("bookmakers", []):
             book = bm["key"]
             for mkt in bm.get("markets", []):
-                if mkt["key"] != "player_goal_scorer": continue
+                # if mkt["key"] != "player_goal_scorer": continue
+                if mkt["key"] != "player_goals": continue
                 for outcome in mkt.get("outcomes", []):
                     name = outcome["name"]
                     price = outcome["price"]
