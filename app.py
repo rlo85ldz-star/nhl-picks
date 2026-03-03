@@ -8,30 +8,35 @@ st.set_page_config(page_title="NHL Goal Probabilities", page_icon="🏒", layout
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Bebas+Neue&display=swap');
-  html, body, [class*="css"] { font-family: 'IBM Plex Mono', monospace; background-color: #0a0c10; color: #e0e0e0; }
-  .main, .block-container { background-color: #0a0c10; padding-top: 1.5rem; max-width: 900px; }
-  h1 { font-family: 'Bebas Neue', sans-serif; color: #00ff9d; letter-spacing: 4px; font-size: 2.2rem; }
-  .stButton>button { background: #00ff9d; color: #000; font-weight: 700; border: none; border-radius: 8px; width: 100%; }
-  .stButton>button:hover { background: #00cc7a; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th { background: #16213e; color: #00ff9d; padding: 10px 14px; text-align: left; font-size: 0.7rem; letter-spacing: 1px; border-bottom: 1px solid rgba(0,255,157,0.2); }
-  td { padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: middle; }
-  tr:hover td { background: rgba(255,255,255,0.03); }
-  .bar-wrap { background: rgba(255,255,255,0.07); border-radius: 3px; height: 6px; width: 100px; display: inline-block; vertical-align: middle; margin-left: 8px; }
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bebas+Neue&display=swap');
+  html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #f5f7fa; color: #1a1a2e; }
+  .main, .block-container { background-color: #f5f7fa; padding-top: 1.5rem; max-width: 960px; }
+  h1 { font-family: 'Bebas Neue', sans-serif; color: #1a1a2e; letter-spacing: 3px; font-size: 2.2rem; }
+  h2 { font-size: 1.1rem; font-weight: 700; color: #1a1a2e; letter-spacing: 1px; margin-top: 1.5rem; }
+  .stButton>button { background: #1a1a2e; color: #fff; font-weight: 600; border: none; border-radius: 8px; width: 100%; font-size: 0.85rem; }
+  .stButton>button:hover { background: #2d2d4e; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  th { background: #1a1a2e; color: #fff; padding: 11px 14px; text-align: left; font-size: 0.7rem; letter-spacing: 1px; font-weight: 600; }
+  td { padding: 9px 14px; border-bottom: 1px solid #eef0f4; color: #2c2c3e; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f0f4ff; }
+  .bar-wrap { background: #e2e6ee; border-radius: 3px; height: 6px; width: 100px; display: inline-block; vertical-align: middle; margin-left: 8px; }
   .bar-fill { height: 6px; border-radius: 3px; }
-  .pick-card { background: linear-gradient(135deg, rgba(0,255,157,0.07), rgba(0,255,157,0.02)); border: 1px solid rgba(0,255,157,0.25); border-radius: 10px; padding: 16px 20px; margin-bottom: 12px; }
-  .pick-label { font-size: 0.65rem; color: #00ff9d; letter-spacing: 3px; margin-bottom: 6px; }
-  .pick-name { font-family: 'Bebas Neue', sans-serif; font-size: 1.6rem; color: #fff; letter-spacing: 2px; }
-  .pick-meta { font-size: 0.75rem; color: #888; margin-top: 4px; }
-  .pick-prob { font-size: 1.1rem; font-weight: 700; margin-top: 6px; }
-  .no-match { background: rgba(255,80,80,0.06); border: 1px solid rgba(255,80,80,0.2); border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; color: #ff8888; font-size: 0.85rem; }
+  .pick-card { background: #fff; border: 1px solid #dde3f0; border-left: 4px solid #1a1a2e; border-radius: 10px; padding: 18px 22px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .pick-label { font-size: 0.65rem; color: #6b7280; letter-spacing: 3px; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; }
+  .pick-name { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; color: #1a1a2e; letter-spacing: 2px; }
+  .pick-meta { font-size: 0.78rem; color: #6b7280; margin-top: 4px; }
+  .pick-prob { font-size: 1.05rem; font-weight: 700; margin-top: 8px; }
+  .no-match { background: #fff8f0; border: 1px solid #fcd3a1; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; color: #92400e; font-size: 0.85rem; }
+  .stTextArea textarea { background: #fff; color: #1a1a2e; border: 1px solid #dde3f0; border-radius: 8px; font-size: 0.85rem; }
+  .stTextInput input { background: #fff; color: #1a1a2e; border: 1px solid #dde3f0; }
+  .stSelectbox div { color: #1a1a2e; }
   footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("# NHL GOAL PROBABILITIES")
-st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS · TIM HORTONS PICKS OPTIMIZER</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#6b7280;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS · TIM HORTONS PICKS OPTIMIZER</p>", unsafe_allow_html=True)
 
 # ── Sidebar
 with st.sidebar:
@@ -41,7 +46,7 @@ with st.sidebar:
     quota_rem  = st.session_state.get("quota_remaining")
     if quota_used is not None:
         pct = quota_used / 500
-        col = "#00ff9d" if pct < 0.6 else ("#FFE066" if pct < 0.85 else "#ff6b6b")
+        col = "#16a34a" if pct < 0.6 else ("#d97706" if pct < 0.85 else "#dc2626")
         bar = "#" * int(pct * 20) + "." * (20 - int(pct * 20))
         st.markdown("---")
         st.markdown("**API Quota**")
@@ -134,7 +139,7 @@ def fetch_data(api_key, target_date):
         home = event["home_team"]
         url  = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us,eu,uk,au"
+            f"?apiKey={api_key}&regions=us"
             f"&markets=player_goals"
             f"&oddsFormat=american&bookmakers=fanduel"
         )
@@ -309,11 +314,11 @@ if fetch_btn or "fd_players" in st.session_state:
                 )
                 if fallback:
                     pct     = fallback["prob"] * 100
-                    bar_col = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else "#FF9933")
+                    bar_col = "#16a34a" if pct >= 30 else ("#d97706" if pct >= 20 else "#ea580c")
                     bar_w   = min(int(fallback["prob"] * 260), 260)
                     st.markdown(f"""
-<div class='pick-card' style='border-color:rgba(255,230,102,0.3);background:linear-gradient(135deg,rgba(255,230,102,0.05),rgba(255,230,102,0.01))'>
-  <div class='pick-label' style='color:#FFE066'>PICK #{pick_num} &nbsp;·&nbsp; NO PROPS FOR LISTED PLAYERS &nbsp;·&nbsp; BEST AVAILABLE FROM ALL GAMES</div>
+<div class='pick-card' style='border-left-color:#d97706;background:#fffbeb;'>
+  <div class='pick-label' style='color:#d97706'>PICK #{pick_num} &nbsp;·&nbsp; NO PROPS FOR LISTED PLAYERS &nbsp;·&nbsp; BEST AVAILABLE FROM ALL GAMES</div>
   <div class='pick-name'>{fallback['name']}</div>
   <div class='pick-meta'>{fallback['away']} @ {fallback['home']} &nbsp;·&nbsp; {fallback['date']}</div>
   <div class='pick-prob' style='color:{bar_col}'>{pct:.1f}% chance of scoring
@@ -326,7 +331,7 @@ if fetch_btn or "fd_players" in st.session_state:
                 continue
 
             pct     = best["prob"] * 100
-            bar_col = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else "#FF9933")
+            bar_col = "#16a34a" if pct >= 30 else ("#d97706" if pct >= 20 else "#ea580c")
             bar_w   = min(int(best["prob"] * 260), 260)
 
             st.markdown(f"""
@@ -393,21 +398,21 @@ if fetch_btn or "fd_players" in st.session_state:
     for i, p in enumerate(results):
         pct      = p["prob"] * 100
         bar_w    = min(int(p["prob"] * 200), 200)
-        bar_col  = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else ("#FF9933" if pct >= 15 else "#ff6b6b"))
-        rank_col = "#00ff9d" if i < 3 else ("#FFE066" if i < 10 else "#444")
+        bar_col  = "#16a34a" if pct >= 30 else ("#d97706" if pct >= 20 else ("#ea580c" if pct >= 15 else "#dc2626"))
+        rank_col = "#16a34a" if i < 3 else ("#b45309" if i < 10 else "#9ca3af")
         bold     = "700" if i < 5 else "400"
         rows += (
             "<tr>"
             f"<td style='color:{rank_col};font-weight:700;width:40px'>{i+1}</td>"
-            f"<td style='color:#f0f0f0;font-weight:{bold}'>{p['name']}</td>"
-            f"<td style='color:#aaa;font-size:0.8rem'>{p['away']}</td>"
-            f"<td style='color:#555;font-size:0.75rem;text-align:center'>@</td>"
-            f"<td style='color:#aaa;font-size:0.8rem'>{p['home']}</td>"
-            f"<td style='color:#555;font-size:0.75rem'>{p['date']}</td>"
+            f"<td style='color:#1a1a2e;font-weight:{bold}'>{p['name']}</td>"
+            f"<td style='color:#4b5563;font-size:0.8rem'>{p['away']}</td>"
+            f"<td style='color:#9ca3af;font-size:0.75rem;text-align:center'>@</td>"
+            f"<td style='color:#4b5563;font-size:0.8rem'>{p['home']}</td>"
+            f"<td style='color:#9ca3af;font-size:0.75rem'>{p['date']}</td>"
             f"<td style='font-weight:700;color:{bar_col};white-space:nowrap'>{pct:.1f}%"
             f"<span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span></td>"
-            f"<td style='color:#aaa;font-family:monospace;font-size:0.8rem'>{p['over']}</td>"
-            f"<td style='color:#555;font-family:monospace;font-size:0.8rem'>{p['under']}</td>"
+            f"<td style='color:#374151;font-family:monospace;font-size:0.8rem'>{p['over']}</td>"
+            f"<td style='color:#9ca3af;font-family:monospace;font-size:0.8rem'>{p['under']}</td>"
             "</tr>"
         )
 
