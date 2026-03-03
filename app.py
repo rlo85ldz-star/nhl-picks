@@ -4,12 +4,52 @@ from datetime import datetime
 import pytz
 import datetime as dt
 
-st.set_page_config(page_title="NHL fanduel Props", page_icon="🏒", layout="wide")
-st.title("NHL fanduel - player_goals Props")
+st.set_page_config(page_title="NHL Goal Probabilities", page_icon="🏒", layout="wide")
 
+st.markdown("""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Bebas+Neue&display=swap');
+  html, body, [class*="css"] { font-family: 'IBM Plex Mono', monospace; background-color: #0a0c10; color: #e0e0e0; }
+  .main, .block-container { background-color: #0a0c10; padding-top: 1.5rem; max-width: 900px; }
+  h1 { font-family: 'Bebas Neue', sans-serif; color: #00ff9d; letter-spacing: 4px; font-size: 2.2rem; }
+  .stButton>button { background: #00ff9d; color: #000; font-weight: 700; border: none; border-radius: 8px; width: 100%; }
+  .stButton>button:hover { background: #00cc7a; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { background: #16213e; color: #00ff9d; padding: 10px 14px; text-align: left; font-size: 0.7rem; letter-spacing: 1px; border-bottom: 1px solid rgba(0,255,157,0.2); }
+  td { padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+  .bar-wrap { background: rgba(255,255,255,0.07); border-radius: 3px; height: 6px; width: 100px; display: inline-block; vertical-align: middle; margin-left: 8px; }
+  .bar-fill  { height: 6px; border-radius: 3px; }
+  footer { visibility: hidden; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("# NHL GOAL PROBABILITIES")
+st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS · OVER 0.5 · VIG REMOVED</p>", unsafe_allow_html=True)
+
+# ── Sidebar
 with st.sidebar:
+    st.markdown("### Settings")
     api_key = st.text_input("Odds API Key", type="password", placeholder="the-odds-api.com key")
+    quota_used = st.session_state.get("quota_used")
+    quota_rem  = st.session_state.get("quota_remaining")
+    if quota_used is not None:
+        pct = quota_used / 500
+        col = "#00ff9d" if pct < 0.6 else ("#FFE066" if pct < 0.85 else "#ff6b6b")
+        bar = "#" * int(pct * 20) + "." * (20 - int(pct * 20))
+        st.markdown("---")
+        st.markdown("**API Quota**")
+        st.markdown(f"<div style='font-family:monospace;color:{col};font-size:0.75rem'>{bar}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<span style='color:{col};font-weight:700'>{quota_used}</span>"
+            f"<span style='color:#555'> / 500 &nbsp;·&nbsp; </span>"
+            f"<span style='color:#00ff9d;font-weight:700'>{quota_rem} left</span>",
+            unsafe_allow_html=True
+        )
+        if quota_rem and quota_rem <= 50:
+            st.warning(f"Only {quota_rem} requests left!")
 
+# ── Date picker
 _et  = pytz.timezone("America/Toronto")
 _now = datetime.now(_et)
 _d0  = _now.strftime("%Y-%m-%d")
@@ -25,49 +65,57 @@ with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
     fetch_btn = st.button("FETCH", use_container_width=True)
 
-if not api_key:
-    st.info("Add your API key in the sidebar.")
-    st.stop()
+st.markdown("---")
 
-if fetch_btn:
+# ── Helpers
+def american_to_implied(a):
+    return 1 / ((a / 100 + 1) if a > 0 else (100 / abs(a) + 1))
+
+def remove_vig(yes_p, no_p):
+    return yes_p / (yes_p + no_p)
+
+# ── Fetch & parse
+def fetch_data(api_key, target_date):
     tz = pytz.timezone("America/Toronto")
 
-    # Step 1: get all events
-    with st.spinner("Fetching events..."):
-        r = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}",
-            timeout=60
-        )
+    r = requests.get(
+        f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}",
+        timeout=60
+    )
+    r.raise_for_status()
     events = r.json()
+
+    try:
+        st.session_state["quota_used"]      = int(r.headers.get("x-requests-used", 0))
+        st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
+    except Exception:
+        pass
 
     # Filter to selected ET date
     today_events = []
     for e in events:
         utc_dt  = dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
         et_date = utc_dt.astimezone(tz).strftime("%Y-%m-%d")
-        if et_date == selected_date:
+        if et_date == target_date:
             today_events.append(e)
 
-    st.write(f"**Games on {selected_date}:** {len(today_events)}")
+    all_et_dates = sorted(set(
+        dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ")
+        .replace(tzinfo=pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
+        for e in events
+    ))
+
     if not today_events:
-        all_dates = sorted(set(
-            dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ")
-            .replace(tzinfo=pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
-            for e in events
-        ))
-        st.warning(f"No games on {selected_date}. Available dates: {all_dates}")
-        st.stop()
+        return [], 1, all_et_dates
 
-    # Step 2: fetch player_goals from fanduel for ALL games today
-    st.markdown("---")
-    st.write(f"Fetching `player_goals` from fanduel for {len(today_events)} games...")
-
-    all_raw = []
+    players   = {}
     req_count = 1
-    progress = st.progress(0)
+    progress  = st.progress(0, text="Fetching game props...")
 
-    for i, event in enumerate(today_events):
-        url = (
+    for idx, event in enumerate(today_events):
+        away = event["away_team"]
+        home = event["home_team"]
+        url  = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
             f"?apiKey={api_key}&regions=us,eu,uk,au"
             f"&markets=player_goals"
@@ -75,18 +123,137 @@ if fetch_btn:
         )
         resp = requests.get(url, timeout=30)
         req_count += 1
-        all_raw.append({
-            "game": f"{event['away_team']} @ {event['home_team']}",
-            "status": resp.status_code,
-            "data": resp.json()
-        })
-        progress.progress((i + 1) / len(today_events))
+        progress.progress((idx + 1) / len(today_events), text=f"Fetching {away} @ {home}...")
 
-    st.write(f"Requests used: `{req_count}`  |  Remaining: `{resp.headers.get('x-requests-remaining', 'N/A')}`")
+        if resp.status_code != 200:
+            continue
 
-    # Step 3: show raw JSON for each game
-    st.markdown("---")
-    st.subheader("Raw JSON per game")
-    for item in all_raw:
-        with st.expander(f"{item['game']} (status {item['status']})"):
-            st.json(item["data"])
+        try:
+            st.session_state["quota_used"]      = int(resp.headers.get("x-requests-used", 0))
+            st.session_state["quota_remaining"] = int(resp.headers.get("x-requests-remaining", 500))
+        except Exception:
+            pass
+
+        data = resp.json()
+
+        for bm in data.get("bookmakers", []):
+            if bm["key"] != "fanduel":
+                continue
+            for mkt in bm.get("markets", []):
+                if mkt["key"] != "player_goals":
+                    continue
+
+                # Group Over/Under per player
+                by_player = {}
+                for outcome in mkt.get("outcomes", []):
+                    name  = outcome["name"]
+                    price = outcome["price"]
+                    desc  = (outcome.get("description") or "").lower()
+                    point = outcome.get("point", None)
+
+                    if name not in by_player:
+                        by_player[name] = {}
+
+                    if desc == "over":
+                        by_player[name]["over"] = price
+                        if point is not None:
+                            by_player[name]["point"] = point
+                    elif desc == "under":
+                        by_player[name]["under"] = price
+                    elif desc in ("yes", "scorer", "to score", "anytime"):
+                        by_player[name]["over"] = price
+                    elif desc == "no":
+                        by_player[name]["under"] = price
+
+                for name, odds in by_player.items():
+                    if "over" not in odds:
+                        continue
+                    raw_yes = american_to_implied(odds["over"])
+                    if "under" in odds:
+                        prob = remove_vig(raw_yes, american_to_implied(odds["under"]))
+                    else:
+                        prob = raw_yes
+                    over_s  = f"+{odds['over']}" if odds["over"] > 0 else str(odds["over"])
+                    under_s = (f"+{odds['under']}" if odds["under"] > 0 else str(odds["under"])) if "under" in odds else "—"
+                    players[name] = {
+                        "name":    name,
+                        "away":    away,
+                        "home":    home,
+                        "date":    target_date,
+                        "prob":    prob,
+                        "over":    over_s,
+                        "under":   under_s,
+                    }
+
+    progress.empty()
+    results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
+    return results, req_count, all_et_dates
+
+# ── Main
+if not api_key:
+    st.info("Add your the-odds-api.com key in the sidebar, then click FETCH.")
+    st.stop()
+
+if fetch_btn or "fd_results" in st.session_state:
+    if fetch_btn:
+        st.session_state.pop("fd_results", None)
+        try:
+            results, reqs, all_dates = fetch_data(api_key, selected_date)
+            st.session_state["fd_results"]  = results
+            st.session_state["fd_reqs"]     = reqs
+            st.session_state["fd_dates"]    = all_dates
+            st.session_state["fd_date_sel"] = selected_date
+        except Exception as e:
+            import traceback
+            st.error(f"Error: {e}\n\n{traceback.format_exc()}")
+            st.stop()
+
+    results   = st.session_state.get("fd_results", [])
+    reqs      = st.session_state.get("fd_reqs", 0)
+    all_dates = st.session_state.get("fd_dates", [])
+    date_sel  = st.session_state.get("fd_date_sel", selected_date)
+
+    if not all_dates or date_sel not in all_dates:
+        st.warning(f"No NHL games found for **{date_sel}**. Available dates: {all_dates}")
+        st.stop()
+
+    if not results:
+        st.warning(f"No FanDuel player_goals props found for **{date_sel}**. Props usually post 2-4 hours before puck drop.")
+        st.stop()
+
+    st.markdown(f"**{len(results)} players** · FanDuel · **{date_sel}** · sorted by probability")
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    rows = ""
+    for i, p in enumerate(results):
+        pct      = p["prob"] * 100
+        bar_w    = min(int(p["prob"] * 200), 200)
+        bar_col  = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else ("#FF9933" if pct >= 15 else "#ff6b6b"))
+        rank_col = "#00ff9d" if i < 3 else ("#FFE066" if i < 10 else "#444")
+        bold     = "700" if i < 5 else "400"
+
+        rows += (
+            "<tr>"
+            f"<td style='color:{rank_col};font-weight:700;width:40px'>{i+1}</td>"
+            f"<td style='color:#f0f0f0;font-weight:{bold}'>{p['name']}</td>"
+            f"<td style='color:#aaa;font-size:0.8rem'>{p['away']}</td>"
+            f"<td style='color:#555;font-size:0.75rem'>vs</td>"
+            f"<td style='color:#aaa;font-size:0.8rem'>{p['home']}</td>"
+            f"<td style='color:#555;font-size:0.75rem'>{p['date']}</td>"
+            f"<td style='font-weight:700;color:{bar_col};white-space:nowrap'>{pct:.1f}%"
+            f"<span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span></td>"
+            f"<td style='color:#aaa;font-family:monospace;font-size:0.8rem'>{p['over']}</td>"
+            f"<td style='color:#555;font-family:monospace;font-size:0.8rem'>{p['under']}</td>"
+            "</tr>"
+        )
+
+    st.markdown(
+        "<table><thead><tr>"
+        "<th>#</th><th>PLAYER</th><th>AWAY</th><th></th><th>HOME</th><th>DATE</th>"
+        "<th>PROBABILITY</th><th>OVER 0.5</th><th>UNDER 0.5</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table>",
+        unsafe_allow_html=True
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption(f"Source: FanDuel · Market: player_goals · Requests used: {reqs} · Not gambling advice")
