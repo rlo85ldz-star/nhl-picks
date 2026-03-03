@@ -256,15 +256,11 @@ def fetch_picks(api_key: str, target_date: str):
 
     st.session_state["raw_events_json"] = events
 
-    # --- DEBUG SECTION: POPULATE THE BOXES ---
-    # This captures EVERY date the API is offering before we filter them
     all_api_dates = sorted(set(e["commence_time"][:10] for e in events)) if events else []
     st.session_state["debug_dates"] = all_api_dates 
     st.session_state["debug_today"] = target_date
     st.session_state["debug_total_events_raw"] = len(events)
-    # -----------------------------------------
 
-    # Quota tracking
     try:
         st.session_state["quota_used"] = int(r.headers.get("x-requests-used", 0))
         st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
@@ -286,6 +282,7 @@ def fetch_picks(api_key: str, target_date: str):
     books = ",".join(BOOK_WEIGHTS.keys())
     all_players = {}
     requests_used = 1
+    raw_odds_data = [] # Fixed: Initialized the list here
 
     for event in today_events:
         url = (
@@ -298,7 +295,7 @@ def fetch_picks(api_key: str, target_date: str):
         if resp.status_code != 200: continue
         
         data = resp.json()
-        raw_odds_data.append(data)
+        raw_odds_data.append(data) # Now this will work!
         game_label = f"{event['away_team']} @ {event['home_team']}"
 
         for bm in data.get("bookmakers", []):
