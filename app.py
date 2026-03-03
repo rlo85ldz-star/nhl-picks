@@ -19,13 +19,19 @@ st.markdown("""
   td { padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: middle; }
   tr:hover td { background: rgba(255,255,255,0.03); }
   .bar-wrap { background: rgba(255,255,255,0.07); border-radius: 3px; height: 6px; width: 100px; display: inline-block; vertical-align: middle; margin-left: 8px; }
-  .bar-fill  { height: 6px; border-radius: 3px; }
+  .bar-fill { height: 6px; border-radius: 3px; }
+  .pick-card { background: linear-gradient(135deg, rgba(0,255,157,0.07), rgba(0,255,157,0.02)); border: 1px solid rgba(0,255,157,0.25); border-radius: 10px; padding: 16px 20px; margin-bottom: 12px; }
+  .pick-label { font-size: 0.65rem; color: #00ff9d; letter-spacing: 3px; margin-bottom: 6px; }
+  .pick-name { font-family: 'Bebas Neue', sans-serif; font-size: 1.6rem; color: #fff; letter-spacing: 2px; }
+  .pick-meta { font-size: 0.75rem; color: #888; margin-top: 4px; }
+  .pick-prob { font-size: 1.1rem; font-weight: 700; margin-top: 6px; }
+  .no-match { background: rgba(255,80,80,0.06); border: 1px solid rgba(255,80,80,0.2); border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; color: #ff8888; font-size: 0.85rem; }
   footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("# NHL GOAL PROBABILITIES")
-st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS · OVER 0.5 · VIG REMOVED</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#555;font-size:0.75rem;letter-spacing:2px;margin-top:-12px'>FANDUEL · PLAYER_GOALS · TIM HORTONS PICKS OPTIMIZER</p>", unsafe_allow_html=True)
 
 # ── Sidebar
 with st.sidebar:
@@ -48,6 +54,15 @@ with st.sidebar:
         )
         if quota_rem and quota_rem <= 50:
             st.warning(f"Only {quota_rem} requests left!")
+    st.markdown("---")
+    st.markdown("**How to use**")
+    st.markdown("""
+1. Select game date  
+2. Click **FETCH** to load FanDuel odds  
+3. Go to [hockeychallengehelper.com](https://hockeychallengehelper.com)  
+4. Paste the eligible players for each pick slot below  
+5. App picks the highest-probability player per slot
+""")
 
 # ── Date picker
 _et  = pytz.timezone("America/Toronto")
@@ -63,7 +78,7 @@ with col_date:
     selected_date  = _date_labels[selected_label]
 with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
-    fetch_btn = st.button("FETCH", use_container_width=True)
+    fetch_btn = st.button("FETCH ODDS", use_container_width=True)
 
 st.markdown("---")
 
@@ -77,7 +92,7 @@ def remove_vig(yes_p, no_p):
 def fmt_odds(o):
     return f"+{o}" if o > 0 else str(o)
 
-# ── Fetch & parse
+# ── Fetch
 def fetch_data(api_key, target_date):
     tz = pytz.timezone("America/Toronto")
 
@@ -94,7 +109,6 @@ def fetch_data(api_key, target_date):
     except Exception:
         pass
 
-    # Filter to selected ET date
     today_events = []
     for e in events:
         utc_dt  = dt.datetime.strptime(e["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
@@ -109,7 +123,7 @@ def fetch_data(api_key, target_date):
     ))
 
     if not today_events:
-        return [], 1, all_et_dates
+        return {}, 1, all_et_dates
 
     players   = {}
     req_count = 1
@@ -118,8 +132,7 @@ def fetch_data(api_key, target_date):
     for idx, event in enumerate(today_events):
         away = event["away_team"]
         home = event["home_team"]
-
-        url = (
+        url  = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
             f"?apiKey={api_key}&regions=us,eu,uk,au"
             f"&markets=player_goals"
@@ -138,39 +151,31 @@ def fetch_data(api_key, target_date):
         if resp.status_code != 200:
             continue
 
-        data = resp.json()
-
-        for bm in data.get("bookmakers", []):
+        for bm in resp.json().get("bookmakers", []):
             if bm["key"] != "fanduel":
                 continue
             for mkt in bm.get("markets", []):
                 if mkt["key"] != "player_goals":
                     continue
-
-                # Structure: name = "Over"/"Under", description = player name, point = 0.5
                 by_player = {}
                 for outcome in mkt.get("outcomes", []):
-                    player_name = outcome.get("description", "")
-                    price       = outcome["price"]
-                    side        = outcome["name"].lower()  # "over" or "under"
-
-                    if not player_name:
+                    name  = outcome.get("description", "")
+                    price = outcome["price"]
+                    side  = outcome["name"].lower()
+                    if not name:
                         continue
-                    if player_name not in by_player:
-                        by_player[player_name] = {}
-                    by_player[player_name][side] = price
+                    if name not in by_player:
+                        by_player[name] = {}
+                    by_player[name][side] = price
 
-                for player_name, odds in by_player.items():
+                for name, odds in by_player.items():
                     if "over" not in odds:
                         continue
                     raw_yes = american_to_implied(odds["over"])
-                    if "under" in odds:
-                        prob = remove_vig(raw_yes, american_to_implied(odds["under"]))
-                    else:
-                        prob = raw_yes
-
-                    players[player_name] = {
-                        "name":  player_name,
+                    prob    = remove_vig(raw_yes, american_to_implied(odds["under"])) if "under" in odds else raw_yes
+                    # Store keyed by lowercase name for fuzzy matching
+                    players[name.lower()] = {
+                        "name":  name,
                         "away":  away,
                         "home":  home,
                         "date":  target_date,
@@ -180,20 +185,35 @@ def fetch_data(api_key, target_date):
                     }
 
     progress.empty()
-    results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
-    return results, req_count, all_et_dates
+    return players, req_count, all_et_dates
+
+def find_best(players_dict, candidates):
+    """Given a list of candidate names, return the one with highest probability."""
+    best = None
+    for raw_name in candidates:
+        key = raw_name.strip().lower()
+        # Try exact match first, then partial
+        match = players_dict.get(key)
+        if not match:
+            for k, v in players_dict.items():
+                if key in k or k in key:
+                    match = v
+                    break
+        if match and (best is None or match["prob"] > best["prob"]):
+            best = match
+    return best
 
 # ── Main
 if not api_key:
-    st.info("Add your the-odds-api.com key in the sidebar, then click FETCH.")
+    st.info("Add your the-odds-api.com key in the sidebar, then click FETCH ODDS.")
     st.stop()
 
-if fetch_btn or "fd_results" in st.session_state:
+if fetch_btn or "fd_players" in st.session_state:
     if fetch_btn:
-        st.session_state.pop("fd_results", None)
+        st.session_state.pop("fd_players", None)
         try:
-            results, reqs, all_dates = fetch_data(api_key, selected_date)
-            st.session_state["fd_results"]  = results
+            players, reqs, all_dates = fetch_data(api_key, selected_date)
+            st.session_state["fd_players"]  = players
             st.session_state["fd_reqs"]     = reqs
             st.session_state["fd_dates"]    = all_dates
             st.session_state["fd_date_sel"] = selected_date
@@ -202,7 +222,7 @@ if fetch_btn or "fd_results" in st.session_state:
             st.error(f"Error: {e}\n\n{traceback.format_exc()}")
             st.stop()
 
-    results   = st.session_state.get("fd_results", [])
+    players   = st.session_state.get("fd_players", {})
     reqs      = st.session_state.get("fd_reqs", 0)
     all_dates = st.session_state.get("fd_dates", [])
     date_sel  = st.session_state.get("fd_date_sel", selected_date)
@@ -211,11 +231,111 @@ if fetch_btn or "fd_results" in st.session_state:
         st.warning(f"No NHL games found for **{date_sel}**. Available dates: {all_dates}")
         st.stop()
 
-    if not results:
+    if not players:
         st.warning(f"No FanDuel player_goals props found for **{date_sel}**. Props usually post 2-4 hours before puck drop.")
         st.stop()
 
-    st.markdown(f"**{len(results)} players** · FanDuel · **{date_sel}** · sorted by probability")
+    results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
+    st.success(f"Loaded **{len(results)} players** from FanDuel for **{date_sel}**")
+
+    # ── Section 1: Tim Hortons Pick Optimizer
+    st.markdown("## TIM HORTONS PICK OPTIMIZER")
+    st.markdown(
+        "Go to [hockeychallengehelper.com](https://hockeychallengehelper.com), "
+        "then paste the eligible players for each pick slot below (one name per line)."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        pick1_raw = st.text_area("Pick #1 — eligible players", height=160, placeholder="Sidney Crosby\nDavid Pastrnak\nConnor McDavid")
+    with c2:
+        pick2_raw = st.text_area("Pick #2 — eligible players", height=160, placeholder="Auston Matthews\nLeon Draisaitl\nNathan MacKinnon")
+    with c3:
+        pick3_raw = st.text_area("Pick #3 — eligible players", height=160, placeholder="Nikita Kucherov\nBrayden Point\nSam Reinhart")
+
+    suggest_btn = st.button("SUGGEST PICKS", use_container_width=True)
+
+    if suggest_btn or any([pick1_raw, pick2_raw, pick3_raw]):
+        st.markdown("---")
+        st.markdown("### SUGGESTED PICKS")
+
+        for pick_num, raw_text in enumerate([pick1_raw, pick2_raw, pick3_raw], start=1):
+            candidates = [n.strip() for n in raw_text.strip().splitlines() if n.strip()]
+            if not candidates:
+                st.markdown(f"<div class='no-match'>Pick #{pick_num} — no players entered</div>", unsafe_allow_html=True)
+                continue
+
+            best = find_best(players, candidates)
+            if not best:
+                names_tried = ", ".join(candidates)
+                st.markdown(
+                    f"<div class='no-match'>Pick #{pick_num} — none of these players found in FanDuel props: {names_tried}</div>",
+                    unsafe_allow_html=True
+                )
+                continue
+
+            pct     = best["prob"] * 100
+            bar_col = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else "#FF9933")
+            bar_w   = min(int(best["prob"] * 260), 260)
+
+            st.markdown(f"""
+<div class='pick-card'>
+  <div class='pick-label'>PICK #{pick_num} &nbsp;·&nbsp; BEST OPTION</div>
+  <div class='pick-name'>{best['name']}</div>
+  <div class='pick-meta'>{best['away']} @ {best['home']} &nbsp;·&nbsp; {best['date']}</div>
+  <div class='pick-prob' style='color:{bar_col}'>{pct:.1f}% chance of scoring
+    <span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span>
+  </div>
+  <div style='font-size:0.75rem;color:#555;margin-top:6px'>FanDuel Over 0.5: {best['over']} &nbsp;·&nbsp; Under: {best['under']}</div>
+</div>
+""", unsafe_allow_html=True)
+
+            # Show all candidates ranked
+            ranked = []
+            for raw_name in candidates:
+                key   = raw_name.strip().lower()
+                match = players.get(key)
+                if not match:
+                    for k, v in players.items():
+                        if key in k or k in key:
+                            match = v
+                            break
+                if match:
+                    ranked.append(match)
+                else:
+                    ranked.append({"name": raw_name.strip(), "prob": None, "over": "—", "under": "—", "away": "—", "home": "—"})
+            ranked.sort(key=lambda x: x["prob"] if x["prob"] else -1, reverse=True)
+
+            with st.expander(f"All candidates for Pick #{pick_num}"):
+                rows = ""
+                for i, p in enumerate(ranked):
+                    if p["prob"] is None:
+                        rows += f"<tr><td style='color:#444'>{i+1}</td><td style='color:#666'>{p['name']}</td><td colspan='3' style='color:#444'>not found in FanDuel props</td></tr>"
+                    else:
+                        pc  = p["prob"] * 100
+                        bc  = "#00ff9d" if pc >= 30 else ("#FFE066" if pc >= 20 else "#FF9933")
+                        bw  = min(int(p["prob"] * 160), 160)
+                        bold = "700" if i == 0 else "400"
+                        rows += (
+                            "<tr>"
+                            f"<td style='color:#444;width:30px'>{i+1}</td>"
+                            f"<td style='color:#f0f0f0;font-weight:{bold}'>{p['name']}{' ✓' if i == 0 else ''}</td>"
+                            f"<td style='color:#aaa;font-size:0.78rem'>{p['away']} @ {p['home']}</td>"
+                            f"<td style='font-weight:700;color:{bc};white-space:nowrap'>{pc:.1f}%"
+                            f"<span class='bar-wrap'><span class='bar-fill' style='width:{bw}px;background:{bc}'></span></span></td>"
+                            f"<td style='color:#aaa;font-family:monospace'>{p['over']}</td>"
+                            "</tr>"
+                        )
+                st.markdown(
+                    "<table><thead><tr><th>#</th><th>PLAYER</th><th>GAME</th><th>PROB</th><th>OVER</th></tr></thead>"
+                    f"<tbody>{rows}</tbody></table>",
+                    unsafe_allow_html=True
+                )
+
+    # ── Section 2: Full player table
+    st.markdown("---")
+    st.markdown("## ALL PLAYERS")
+    st.markdown(f"**{len(results)} players** sorted by goal probability")
     st.markdown("<br>", unsafe_allow_html=True)
 
     rows = ""
@@ -225,7 +345,6 @@ if fetch_btn or "fd_results" in st.session_state:
         bar_col  = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else ("#FF9933" if pct >= 15 else "#ff6b6b"))
         rank_col = "#00ff9d" if i < 3 else ("#FFE066" if i < 10 else "#444")
         bold     = "700" if i < 5 else "400"
-
         rows += (
             "<tr>"
             f"<td style='color:{rank_col};font-weight:700;width:40px'>{i+1}</td>"
