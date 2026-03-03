@@ -108,6 +108,9 @@ def fetch_data(api_key, target_date):
     r.raise_for_status()
     events = r.json()
 
+    # --- NEW: Create a dictionary to hold our debug data ---
+    raw_debug_data = {"events": events, "odds": {}}
+    
     try:
         st.session_state["quota_used"]      = int(r.headers.get("x-requests-used", 0))
         st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
@@ -156,7 +159,12 @@ def fetch_data(api_key, target_date):
         if resp.status_code != 200:
             continue
 
-        for bm in resp.json().get("bookmakers", []):
+        # --- NEW: Save the raw JSON before looping through it ---
+        odds_json = resp.json()
+        raw_debug_data["odds"][f"FanDuel - {away} @ {home}"] = odds_json
+        
+        # for bm in resp.json().get("bookmakers", []):
+        for bm in odds_json.get("bookmakers", []):
             if bm["key"] != "fanduel":
                 continue
             for mkt in bm.get("markets", []):
@@ -219,7 +227,11 @@ def fetch_data(api_key, target_date):
             if resp.status_code != 200:
                 continue
 
-            for bm in resp.json().get("bookmakers", []):
+            odds_json = resp.json()
+            raw_debug_data["odds"][f"DraftKings - {away} @ {home}"] = odds_json
+          
+            # for bm in resp.json().get("bookmakers", []):
+            for bm in odds_json.get("bookmakers", []):
                 if bm["key"] != "draftkings":
                     continue
                 for mkt in bm.get("markets", []):
@@ -270,7 +282,8 @@ def fetch_data(api_key, target_date):
             players[k]["dk_under"] = "—"
 
     progress.empty()
-    return players, req_count, all_et_dates
+    # return players, req_count, all_et_dates
+    return players, req_count, all_et_dates, raw_debug_data
 
 def initial_last(full_name):
     """Convert 'David Pastrnak' -> 'd. pastrnak'"""
@@ -306,14 +319,26 @@ if not api_key:
     st.stop()
 
 if fetch_btn or "fd_players" in st.session_state:
+    # if fetch_btn:
+    #     st.session_state.pop("fd_players", None)
+    #     try:
+    #         players, reqs, all_dates = fetch_data(api_key, selected_date)
+    #         st.session_state["fd_players"]  = players
+    #         st.session_state["fd_reqs"]     = reqs
+    #         st.session_state["fd_dates"]    = all_dates
+    #         st.session_state["fd_date_sel"] = selected_date
+    #     except Exception as e:
     if fetch_btn:
         st.session_state.pop("fd_players", None)
         try:
-            players, reqs, all_dates = fetch_data(api_key, selected_date)
+            # --- MODIFIED: Catch the 4th variable (raw_debug_data) ---
+            players, reqs, all_dates, raw_debug_data = fetch_data(api_key, selected_date)
             st.session_state["fd_players"]  = players
             st.session_state["fd_reqs"]     = reqs
             st.session_state["fd_dates"]    = all_dates
             st.session_state["fd_date_sel"] = selected_date
+            # --- NEW: Save it to session state ---
+            st.session_state["raw_debug_data"] = raw_debug_data
         except Exception as e:
             import traceback
             st.error(f"Error: {e}\n\n{traceback.format_exc()}")
@@ -335,6 +360,19 @@ if fetch_btn or "fd_players" in st.session_state:
     results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
     st.success(f"Loaded **{len(results)} players** from FanDuel for **{date_sel}**")
 
+    # ── NEW: API INVESTIGATION PANEL ──────────────────────────────
+    with st.expander("🛠️ API INVESTIGATION & RAW JSON (DEBUG)"):
+        st.write("Use this to verify if the books have actually posted the odds yet.")
+        if "raw_debug_data" in st.session_state:
+            tab_odds, tab_events = st.tabs(["🏒 Raw Odds (By Game)", "📅 Raw Schedule (Events)"])
+            with tab_odds:
+                st.json(st.session_state["raw_debug_data"].get("odds", {}))
+            with tab_events:
+                st.json(st.session_state["raw_debug_data"].get("events", []))
+        else:
+            st.info("Click 'FETCH ODDS' to load raw JSON data.")
+    # ──────────────────────────────────────────────────────────────
+  
     with st.expander("Search FanDuel player names"):
         search = st.text_input("Type part of a name to find it", placeholder="e.g. kap")
         if search:
