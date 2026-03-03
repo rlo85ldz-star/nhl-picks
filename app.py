@@ -189,8 +189,10 @@ def fetch_data(api_key, target_date):
                         "under": fmt_odds(odds["under"]) if "under" in odds else "—",
                     }
 
+    # # Second pass: fetch DraftKings for any games that returned zero FanDuel players
+    # games_with_fd = set(p["game"] for p in players.values())
     # Second pass: fetch DraftKings for any games that returned zero FanDuel players
-    games_with_fd = set(p["game"] for p in players.values())
+    games_with_fd = set(f"{p['away']} @ {p['home']}" for p in players.values())
     games_missing = [e for e in today_events if f"{e['away_team']} @ {e['home_team']}" not in games_with_fd]
 
     if games_missing:
