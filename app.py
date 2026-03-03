@@ -28,6 +28,7 @@ st.markdown("""
   .pick-meta { font-size: 0.78rem; color: #6b7280; margin-top: 4px; }
   .pick-prob { font-size: 1.05rem; font-weight: 700; margin-top: 8px; }
   .no-match { background: #fff8f0; border: 1px solid #fcd3a1; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; color: #92400e; font-size: 0.85rem; }
+  .no-rec { background: #f8f9fa; border: 1px solid #dee2e6; border-left: 4px solid #9ca3af; border-radius: 10px; padding: 18px 22px; margin-bottom: 14px; color: #6b7280; font-size: 0.95rem; }
   .stTextArea textarea { background: #fff; color: #1a1a2e; border: 1px solid #dde3f0; border-radius: 8px; font-size: 0.85rem; }
   .stTextInput input { background: #fff; color: #1a1a2e; border: 1px solid #dde3f0; }
   .stSelectbox div { color: #1a1a2e; }
@@ -54,7 +55,7 @@ with st.sidebar:
         st.markdown(
             f"<span style='color:{col};font-weight:700'>{quota_used}</span>"
             f"<span style='color:#555'> / 500 &nbsp;·&nbsp; </span>"
-            f"<span style='color:#00ff9d;font-weight:700'>{quota_rem} left</span>",
+            f"<span style='color:#16a34a;font-weight:700'>{quota_rem} left</span>",
             unsafe_allow_html=True
         )
         if quota_rem and quota_rem <= 50:
@@ -97,7 +98,7 @@ def remove_vig(yes_p, no_p):
 def fmt_odds(o):
     return f"+{o}" if o > 0 else str(o)
 
-# ── Fetch
+# ── Fetch (FanDuel only)
 def fetch_data(api_key, target_date):
     tz = pytz.timezone("America/Toronto")
 
@@ -108,9 +109,8 @@ def fetch_data(api_key, target_date):
     r.raise_for_status()
     events = r.json()
 
-    # --- NEW: Create a dictionary to hold our debug data ---
     raw_debug_data = {"events": events, "odds": {}}
-    
+
     try:
         st.session_state["quota_used"]      = int(r.headers.get("x-requests-used", 0))
         st.session_state["quota_remaining"] = int(r.headers.get("x-requests-remaining", 500))
@@ -131,7 +131,7 @@ def fetch_data(api_key, target_date):
     ))
 
     if not today_events:
-        return {}, 1, all_et_dates
+        return {}, 1, all_et_dates, raw_debug_data
 
     players   = {}
     req_count = 1
@@ -159,11 +159,9 @@ def fetch_data(api_key, target_date):
         if resp.status_code != 200:
             continue
 
-        # --- NEW: Save the raw JSON before looping through it ---
         odds_json = resp.json()
         raw_debug_data["odds"][f"FanDuel - {away} @ {home}"] = odds_json
-        
-        # for bm in resp.json().get("bookmakers", []):
+
         for bm in odds_json.get("bookmakers", []):
             if bm["key"] != "fanduel":
                 continue
@@ -186,7 +184,6 @@ def fetch_data(api_key, target_date):
                         continue
                     raw_yes = american_to_implied(odds["over"])
                     prob    = remove_vig(raw_yes, american_to_implied(odds["under"])) if "under" in odds else raw_yes
-                    # Store keyed by lowercase name for fuzzy matching
                     players[name.lower()] = {
                         "name":  name,
                         "away":  away,
@@ -197,92 +194,7 @@ def fetch_data(api_key, target_date):
                         "under": fmt_odds(odds["under"]) if "under" in odds else "—",
                     }
 
-    # # Second pass: fetch DraftKings for any games that returned zero FanDuel players
-    # games_with_fd = set(p["game"] for p in players.values())
-    # Second pass: fetch DraftKings for any games that returned zero FanDuel players
-    games_with_fd = set(f"{p['away']} @ {p['home']}" for p in players.values())
-    games_missing = [e for e in today_events if f"{e['away_team']} @ {e['home_team']}" not in games_with_fd]
-
-    if games_missing:
-        progress2 = st.progress(0, text="Fetching DraftKings for missing games...")
-        for idx, event in enumerate(games_missing):
-            away = event["away_team"]
-            home = event["home_team"]
-            url  = (
-                f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-                f"?apiKey={api_key}&regions=us,eu,uk,au"
-                f"&markets=player_goals"
-                f"&oddsFormat=american&bookmakers=draftkings"
-            )
-            resp = requests.get(url, timeout=30)
-            req_count += 1
-            progress2.progress((idx + 1) / len(games_missing), text=f"DraftKings: {away} @ {home}...")
-
-            try:
-                st.session_state["quota_used"]      = int(resp.headers.get("x-requests-used", 0))
-                st.session_state["quota_remaining"] = int(resp.headers.get("x-requests-remaining", 500))
-            except Exception:
-                pass
-
-            if resp.status_code != 200:
-                continue
-
-            odds_json = resp.json()
-            raw_debug_data["odds"][f"DraftKings - {away} @ {home}"] = odds_json
-          
-            # for bm in resp.json().get("bookmakers", []):
-            for bm in odds_json.get("bookmakers", []):
-                if bm["key"] != "draftkings":
-                    continue
-                for mkt in bm.get("markets", []):
-                    if mkt["key"] != "player_goals":
-                        continue
-                    by_player = {}
-                    for outcome in mkt.get("outcomes", []):
-                        name  = outcome.get("description", "")
-                        price = outcome["price"]
-                        side  = outcome["name"].lower()
-                        if not name:
-                            continue
-                        if name not in by_player:
-                            by_player[name] = {}
-                        by_player[name][side] = price
-
-                    for name, odds in by_player.items():
-                        if "over" not in odds:
-                            continue
-                        # Only add if not already in FanDuel
-                        if name.lower() in players:
-                            continue
-                        raw_yes = american_to_implied(odds["over"])
-                        prob    = remove_vig(raw_yes, american_to_implied(odds["under"])) if "under" in odds else raw_yes
-                        players[name.lower()] = {
-                            "name":   name,
-                            "away":   away,
-                            "home":   home,
-                            "date":   target_date,
-                            "prob":   prob,
-                            "over":   fmt_odds(odds["over"]),
-                            "under":  fmt_odds(odds["under"]) if "under" in odds else "—",
-                            "source": "DraftKings",
-                            "fd_over":  "—",
-                            "fd_under": "—",
-                            "dk_over":  fmt_odds(odds["over"]),
-                            "dk_under": fmt_odds(odds["under"]) if "under" in odds else "—",
-                        }
-        progress2.empty()
-
-    # Tag FanDuel players with source fields for table display
-    for k in players:
-        if "source" not in players[k]:
-            players[k]["source"]   = "FanDuel"
-            players[k]["fd_over"]  = players[k]["over"]
-            players[k]["fd_under"] = players[k]["under"]
-            players[k]["dk_over"]  = "—"
-            players[k]["dk_under"] = "—"
-
     progress.empty()
-    # return players, req_count, all_et_dates
     return players, req_count, all_et_dates, raw_debug_data
 
 def initial_last(full_name):
@@ -295,11 +207,9 @@ def initial_last(full_name):
 def find_player(players_dict, candidate):
     """Match a candidate like 'D. Pastrnak' against full names in players_dict."""
     candidate = candidate.strip().lower()
-    # Build a lookup of initial.lastname -> player for every player we have
     for full_key, player in players_dict.items():
         if initial_last(player["name"]) == candidate:
             return player
-        # Also try direct match in case full name was pasted
         if full_key == candidate:
             return player
     return None
@@ -319,25 +229,14 @@ if not api_key:
     st.stop()
 
 if fetch_btn or "fd_players" in st.session_state:
-    # if fetch_btn:
-    #     st.session_state.pop("fd_players", None)
-    #     try:
-    #         players, reqs, all_dates = fetch_data(api_key, selected_date)
-    #         st.session_state["fd_players"]  = players
-    #         st.session_state["fd_reqs"]     = reqs
-    #         st.session_state["fd_dates"]    = all_dates
-    #         st.session_state["fd_date_sel"] = selected_date
-    #     except Exception as e:
     if fetch_btn:
         st.session_state.pop("fd_players", None)
         try:
-            # --- MODIFIED: Catch the 4th variable (raw_debug_data) ---
             players, reqs, all_dates, raw_debug_data = fetch_data(api_key, selected_date)
-            st.session_state["fd_players"]  = players
-            st.session_state["fd_reqs"]     = reqs
-            st.session_state["fd_dates"]    = all_dates
-            st.session_state["fd_date_sel"] = selected_date
-            # --- NEW: Save it to session state ---
+            st.session_state["fd_players"]     = players
+            st.session_state["fd_reqs"]        = reqs
+            st.session_state["fd_dates"]       = all_dates
+            st.session_state["fd_date_sel"]    = selected_date
             st.session_state["raw_debug_data"] = raw_debug_data
         except Exception as e:
             import traceback
@@ -360,30 +259,28 @@ if fetch_btn or "fd_players" in st.session_state:
     results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
     st.success(f"Loaded **{len(results)} players** from FanDuel for **{date_sel}**")
 
-    # ── NEW: API INVESTIGATION PANEL ──────────────────────────────
-    with st.expander("🛠️ API INVESTIGATION & RAW JSON (DEBUG)"):
+    with st.expander("API Investigation & Raw JSON (Debug)"):
         st.write("Use this to verify if the books have actually posted the odds yet.")
         if "raw_debug_data" in st.session_state:
-            tab_odds, tab_events = st.tabs(["🏒 Raw Odds (By Game)", "📅 Raw Schedule (Events)"])
+            tab_odds, tab_events = st.tabs(["Raw Odds (By Game)", "Raw Schedule (Events)"])
             with tab_odds:
                 st.json(st.session_state["raw_debug_data"].get("odds", {}))
             with tab_events:
                 st.json(st.session_state["raw_debug_data"].get("events", []))
         else:
             st.info("Click 'FETCH ODDS' to load raw JSON data.")
-    # ──────────────────────────────────────────────────────────────
-  
+
     with st.expander("Search FanDuel player names"):
         search = st.text_input("Type part of a name to find it", placeholder="e.g. kap")
         if search:
             matches = [v for k, v in players.items() if search.lower() in k]
             if matches:
                 for m in matches:
-                    st.write(f"`{m['name']}` → converted to `{initial_last(m['name'])}`")
+                    st.write(f"`{m['name']}` -> converted to `{initial_last(m['name'])}`")
             else:
                 st.write("No matches found")
 
-    # ── Section 1: Tim Hortons Pick Optimizer
+    # ── Tim Hortons Pick Optimizer
     st.markdown("## TIM HORTONS PICK OPTIMIZER")
     st.markdown(
         "Go to [hockeychallengehelper.com](https://hockeychallengehelper.com), "
@@ -411,43 +308,34 @@ if fetch_btn or "fd_players" in st.session_state:
                 continue
 
             best = find_best(players, candidates)
+
+            # ── No match found
             if not best:
-                names_tried = ", ".join(candidates)
-                # Find the highest-prob player NOT already used in picks 1/2
-                used_names = set()
-                for prev_raw in ([pick1_raw, pick2_raw, pick3_raw])[:pick_num-1]:
-                    prev_candidates = [n.strip() for n in prev_raw.strip().splitlines() if n.strip()]
-                    prev_best = find_best(players, prev_candidates)
-                    if prev_best:
-                        used_names.add(prev_best["name"])
-                fallback = next((p for p in results if p["name"] not in used_names), None)
-                st.markdown(
-                    f"<div class='no-match'>"
-                    f"<strong>Pick #{pick_num} — none of these players have FanDuel props:</strong><br>"
-                    f"<span style='font-size:0.75rem;color:#aa6666'>{names_tried}</span><br><br>"
-                    f"These are likely defencemen/depth players that FanDuel doesn't offer goal props for. "
-                    f"Tim Hortons may update Pick #{pick_num} options closer to game time — check back later."
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-                if fallback:
-                    pct     = fallback["prob"] * 100
-                    bar_col = "#16a34a" if pct >= 30 else ("#d97706" if pct >= 20 else "#ea580c")
-                    bar_w   = min(int(fallback["prob"] * 260), 260)
-                    st.markdown(f"""
-<div class='pick-card' style='border-left-color:#d97706;background:#fffbeb;'>
-  <div class='pick-label' style='color:#d97706'>PICK #{pick_num} &nbsp;·&nbsp; NO PROPS FOR LISTED PLAYERS &nbsp;·&nbsp; BEST AVAILABLE FROM ALL GAMES</div>
-  <div class='pick-name'>{fallback['name']}</div>
-  <div class='pick-meta'>{fallback['away']} @ {fallback['home']} &nbsp;·&nbsp; {fallback['date']}</div>
-  <div class='pick-prob' style='color:{bar_col}'>{pct:.1f}% chance of scoring
-    <span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span>
-  </div>
-  <div style='font-size:0.75rem;color:#555;margin-top:6px'>FanDuel Over 0.5: {fallback['over']} &nbsp;·&nbsp; Under: {fallback['under']}</div>
-  <div style='font-size:0.7rem;color:#666;margin-top:4px'>Note: check Tim Hortons app later — Pick #{pick_num} options may update with better players</div>
-</div>
-""", unsafe_allow_html=True)
+                if pick_num == 3:
+                    # For Pick 3, just say no recommendation
+                    st.markdown(
+                        "<div class='no-rec'>"
+                        "<strong>Pick #3 — No recommendation available</strong><br>"
+                        "<span style='font-size:0.82rem'>None of the listed Pick #3 players have FanDuel goal props. "
+                        "This is common for defence-heavy pick slots. "
+                        "Check back closer to game time as Tim Hortons may update the options.</span>"
+                        "</div>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    names_tried = ", ".join(candidates)
+                    st.markdown(
+                        f"<div class='no-match'>"
+                        f"<strong>Pick #{pick_num} — none of these players have FanDuel props:</strong><br>"
+                        f"<span style='font-size:0.75rem;color:#aa6666'>{names_tried}</span><br><br>"
+                        f"These are likely defencemen/depth players that FanDuel does not offer goal props for. "
+                        f"Check back closer to game time."
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
                 continue
 
+            # ── Match found — show pick card
             pct     = best["prob"] * 100
             bar_col = "#16a34a" if pct >= 30 else ("#d97706" if pct >= 20 else "#ea580c")
             bar_w   = min(int(best["prob"] * 260), 260)
@@ -464,7 +352,7 @@ if fetch_btn or "fd_players" in st.session_state:
 </div>
 """, unsafe_allow_html=True)
 
-            # Show all candidates ranked
+            # All candidates ranked
             ranked = []
             for raw_name in candidates:
                 match = find_player(players, raw_name)
@@ -474,30 +362,28 @@ if fetch_btn or "fd_players" in st.session_state:
                     ranked.append({"name": raw_name.strip(), "prob": None, "over": "—", "under": "—", "away": "—", "home": "—"})
             ranked.sort(key=lambda x: x["prob"] if x["prob"] else -1, reverse=True)
 
-            with st.expander(f"All candidates for Pick #{pick_num} — debug"):
-                st.write("**Names you entered:**", candidates)
-                st.write("**How they look after conversion:**", [c.strip().lower() for c in candidates])
-                st.write("**Sample of FanDuel names → converted:**")
-                sample = {v["name"]: initial_last(v["name"]) for v in list(players.values())[:10]}
-                st.write(sample)
             with st.expander(f"All candidates for Pick #{pick_num}"):
                 rows = ""
                 for i, p in enumerate(ranked):
                     if p["prob"] is None:
-                        rows += f"<tr><td style='color:#444'>{i+1}</td><td style='color:#666'>{p['name']}</td><td colspan='3' style='color:#444'>not found in FanDuel props</td></tr>"
+                        rows += (
+                            f"<tr><td style='color:#9ca3af'>{i+1}</td>"
+                            f"<td style='color:#9ca3af'>{p['name']}</td>"
+                            f"<td colspan='3' style='color:#9ca3af;font-size:0.78rem'>not found in FanDuel props</td></tr>"
+                        )
                     else:
-                        pc  = p["prob"] * 100
-                        bc  = "#00ff9d" if pc >= 30 else ("#FFE066" if pc >= 20 else "#FF9933")
-                        bw  = min(int(p["prob"] * 160), 160)
+                        pc   = p["prob"] * 100
+                        bc   = "#16a34a" if pc >= 30 else ("#d97706" if pc >= 20 else "#ea580c")
+                        bw   = min(int(p["prob"] * 160), 160)
                         bold = "700" if i == 0 else "400"
                         rows += (
                             "<tr>"
-                            f"<td style='color:#444;width:30px'>{i+1}</td>"
-                            f"<td style='color:#f0f0f0;font-weight:{bold}'>{p['name']}{' ✓' if i == 0 else ''}</td>"
-                            f"<td style='color:#aaa;font-size:0.78rem'>{p['away']} @ {p['home']}</td>"
+                            f"<td style='color:#9ca3af;width:30px'>{i+1}</td>"
+                            f"<td style='color:#1a1a2e;font-weight:{bold}'>{p['name']}{' ✓' if i == 0 else ''}</td>"
+                            f"<td style='color:#6b7280;font-size:0.78rem'>{p['away']} @ {p['home']}</td>"
                             f"<td style='font-weight:700;color:{bc};white-space:nowrap'>{pc:.1f}%"
                             f"<span class='bar-wrap'><span class='bar-fill' style='width:{bw}px;background:{bc}'></span></span></td>"
-                            f"<td style='color:#aaa;font-family:monospace'>{p['over']}</td>"
+                            f"<td style='color:#374151;font-family:monospace'>{p['over']}</td>"
                             "</tr>"
                         )
                 st.markdown(
@@ -506,7 +392,7 @@ if fetch_btn or "fd_players" in st.session_state:
                     unsafe_allow_html=True
                 )
 
-    # ── Section 2: Full player table
+    # ── Full player table
     st.markdown("---")
     st.markdown("## ALL PLAYERS")
     st.markdown(f"**{len(results)} players** sorted by goal probability")
@@ -519,34 +405,25 @@ if fetch_btn or "fd_players" in st.session_state:
         bar_col  = "#16a34a" if pct >= 30 else ("#d97706" if pct >= 20 else ("#ea580c" if pct >= 15 else "#dc2626"))
         rank_col = "#16a34a" if i < 3 else ("#b45309" if i < 10 else "#9ca3af")
         bold     = "700" if i < 5 else "400"
-        src       = p.get("source", "FanDuel")
-        src_color = "#1d4ed8" if src == "FanDuel" else "#7c3aed"
-        fd_over   = p.get("fd_over", p.get("over", "—"))
-        fd_under  = p.get("fd_under", p.get("under", "—"))
-        dk_over   = p.get("dk_over", "—")
-        dk_under  = p.get("dk_under", "—")
         rows += (
             "<tr>"
             f"<td style='color:{rank_col};font-weight:700;width:40px'>{i+1}</td>"
             f"<td style='color:#1a1a2e;font-weight:{bold}'>{p['name']}</td>"
-            f"<td style='font-size:0.72rem;font-weight:600;color:{src_color}'>{src}</td>"
             f"<td style='color:#4b5563;font-size:0.8rem'>{p['away']}</td>"
             f"<td style='color:#9ca3af;font-size:0.75rem;text-align:center'>@</td>"
             f"<td style='color:#4b5563;font-size:0.8rem'>{p['home']}</td>"
             f"<td style='color:#9ca3af;font-size:0.75rem'>{p['date']}</td>"
             f"<td style='font-weight:700;color:{bar_col};white-space:nowrap'>{pct:.1f}%"
             f"<span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span></td>"
-            f"<td style='color:#1d4ed8;font-family:monospace;font-size:0.8rem'>{fd_over}</td>"
-            f"<td style='color:#93c5fd;font-family:monospace;font-size:0.8rem'>{fd_under}</td>"
-            f"<td style='color:#7c3aed;font-family:monospace;font-size:0.8rem'>{dk_over}</td>"
-            f"<td style='color:#c4b5fd;font-family:monospace;font-size:0.8rem'>{dk_under}</td>"
+            f"<td style='color:#374151;font-family:monospace;font-size:0.8rem'>{p['over']}</td>"
+            f"<td style='color:#9ca3af;font-family:monospace;font-size:0.8rem'>{p['under']}</td>"
             "</tr>"
         )
 
     st.markdown(
         "<table><thead><tr>"
-        "<th>#</th><th>PLAYER</th><th>SOURCE</th><th>AWAY</th><th></th><th>HOME</th><th>DATE</th>"
-        "<th>PROBABILITY</th><th>FD OVER</th><th>FD UNDER</th><th>DK OVER</th><th>DK UNDER</th>"
+        "<th>#</th><th>PLAYER</th><th>AWAY</th><th></th><th>HOME</th><th>DATE</th>"
+        "<th>PROBABILITY</th><th>OVER 0.5</th><th>UNDER 0.5</th>"
         f"</tr></thead><tbody>{rows}</tbody></table>",
         unsafe_allow_html=True
     )
