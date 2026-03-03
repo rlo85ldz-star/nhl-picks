@@ -233,12 +233,13 @@ def fmt_american(a):
     return f"+{a}" if a > 0 else str(a)
 
 # ─── API ─────────────────────────────────────────────────────
-@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_picks(api_key: str):
     import datetime as dt
     et = pytz.timezone("America/Toronto")
     now_et       = datetime.now(et)
+    now_utc      = datetime.now(timezone.utc)
     today_str    = now_et.strftime("%Y-%m-%d")
+    today_utc    = now_utc.strftime("%Y-%m-%d")
     tomorrow_str = (now_et + dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
     events_url = f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events?apiKey={api_key}"
@@ -262,7 +263,7 @@ def fetch_picks(api_key: str):
     # Match today OR tomorrow UTC — evening ET games often appear as next UTC day
     today_events = [
         e for e in events
-        if e["commence_time"][:10] in (today_str, tomorrow_str)
+        if e["commence_time"][:10] in (today_str, today_utc, tomorrow_str)
     ]
     if not today_events:
         return [], today_str, 0
@@ -465,6 +466,8 @@ if not api_key:
 
 elif fetch_btn or "results" in st.session_state:
     if fetch_btn:
+        for _k in ["results","today_str","reqs"]:
+            st.session_state.pop(_k, None)
         with st.spinner("Fetching odds from Pinnacle, DraftKings, FanDuel... (30–60 sec)"):
             try:
                 results, today_str, reqs = fetch_picks(api_key)
