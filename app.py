@@ -250,6 +250,16 @@ if fetch_btn or "fd_players" in st.session_state:
     results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
     st.success(f"Loaded **{len(results)} players** from FanDuel for **{date_sel}**")
 
+    with st.expander("Search FanDuel player names"):
+        search = st.text_input("Type part of a name to find it", placeholder="e.g. kap")
+        if search:
+            matches = [v for k, v in players.items() if search.lower() in k]
+            if matches:
+                for m in matches:
+                    st.write(f"`{m['name']}` → converted to `{initial_last(m['name'])}`")
+            else:
+                st.write("No matches found")
+
     # ── Section 1: Tim Hortons Pick Optimizer
     st.markdown("## TIM HORTONS PICK OPTIMIZER")
     st.markdown(
@@ -280,10 +290,39 @@ if fetch_btn or "fd_players" in st.session_state:
             best = find_best(players, candidates)
             if not best:
                 names_tried = ", ".join(candidates)
+                # Find the highest-prob player NOT already used in picks 1/2
+                used_names = set()
+                for prev_raw in ([pick1_raw, pick2_raw, pick3_raw])[:pick_num-1]:
+                    prev_candidates = [n.strip() for n in prev_raw.strip().splitlines() if n.strip()]
+                    prev_best = find_best(players, prev_candidates)
+                    if prev_best:
+                        used_names.add(prev_best["name"])
+                fallback = next((p for p in results if p["name"] not in used_names), None)
                 st.markdown(
-                    f"<div class='no-match'>Pick #{pick_num} — none of these players found in FanDuel props: {names_tried}</div>",
+                    f"<div class='no-match'>"
+                    f"<strong>Pick #{pick_num} — none of these players have FanDuel props:</strong><br>"
+                    f"<span style='font-size:0.75rem;color:#aa6666'>{names_tried}</span><br><br>"
+                    f"These are likely defencemen/depth players that FanDuel doesn't offer goal props for. "
+                    f"Tim Hortons may update Pick #{pick_num} options closer to game time — check back later."
+                    f"</div>",
                     unsafe_allow_html=True
                 )
+                if fallback:
+                    pct     = fallback["prob"] * 100
+                    bar_col = "#00ff9d" if pct >= 30 else ("#FFE066" if pct >= 20 else "#FF9933")
+                    bar_w   = min(int(fallback["prob"] * 260), 260)
+                    st.markdown(f"""
+<div class='pick-card' style='border-color:rgba(255,230,102,0.3);background:linear-gradient(135deg,rgba(255,230,102,0.05),rgba(255,230,102,0.01))'>
+  <div class='pick-label' style='color:#FFE066'>PICK #{pick_num} &nbsp;·&nbsp; NO PROPS FOR LISTED PLAYERS &nbsp;·&nbsp; BEST AVAILABLE FROM ALL GAMES</div>
+  <div class='pick-name'>{fallback['name']}</div>
+  <div class='pick-meta'>{fallback['away']} @ {fallback['home']} &nbsp;·&nbsp; {fallback['date']}</div>
+  <div class='pick-prob' style='color:{bar_col}'>{pct:.1f}% chance of scoring
+    <span class='bar-wrap'><span class='bar-fill' style='width:{bar_w}px;background:{bar_col}'></span></span>
+  </div>
+  <div style='font-size:0.75rem;color:#555;margin-top:6px'>FanDuel Over 0.5: {fallback['over']} &nbsp;·&nbsp; Under: {fallback['under']}</div>
+  <div style='font-size:0.7rem;color:#666;margin-top:4px'>Note: check Tim Hortons app later — Pick #{pick_num} options may update with better players</div>
+</div>
+""", unsafe_allow_html=True)
                 continue
 
             pct     = best["prob"] * 100
