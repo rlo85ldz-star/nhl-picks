@@ -110,13 +110,19 @@ def fetch_data(api_key, target_date):
     req_count = 1
     raw       = []
 
+    # Track all bookmakers and markets seen across all responses
+    seen_bookmakers = []
+    seen_markets    = []
+
     for event in today_events:
-        url = (
+        # Step A: fetch with NO bookmaker filter and ALL regions to see everything available
+        url_discover = (
             f"https://api.the-odds-api.com/v4/sports/icehockey_nhl/events/{event['id']}/odds"
-            f"?apiKey={api_key}&regions=us,eu&markets=player_goals"
-            f"&oddsFormat=american&bookmakers=pinnacle"
+            f"?apiKey={api_key}&regions=us,eu,uk,au"
+            f"&markets=player_goals,player_goal_scorer,player_goals_scored,player_anytime_goal_scorer,player_to_score"
+            f"&oddsFormat=american"
         )
-        resp = requests.get(url, timeout=30)
+        resp = requests.get(url_discover, timeout=30)
         req_count += 1
         if resp.status_code != 200:
             continue
@@ -125,13 +131,28 @@ def fetch_data(api_key, target_date):
         raw.append(data)
         game = f"{event['away_team']} @ {event['home_team']}"
 
+        # Catalog every bookmaker and market key we receive
+        for bm in data.get("bookmakers", []):
+            bk = bm["key"]
+            if bk not in seen_bookmakers:
+                seen_bookmakers.append(bk)
+            for mkt in bm.get("markets", []):
+                mk = mkt["key"]
+                entry = f"{bk}:{mk}"
+                if entry not in seen_markets:
+                    seen_markets.append(entry)
+
+        # Now extract Pinnacle goal props (try all goal market keys)
+        goal_market_keys = {
+            "player_goals", "player_goal_scorer", "player_goals_scored",
+            "player_anytime_goal_scorer", "player_to_score",
+        }
         for bm in data.get("bookmakers", []):
             if bm["key"] != "pinnacle":
                 continue
             for mkt in bm.get("markets", []):
-                if mkt["key"] != "player_goals":
+                if mkt["key"] not in goal_market_keys:
                     continue
-                # Group outcomes by player name
                 by_player = {}
                 for outcome in mkt.get("outcomes", []):
                     name  = outcome["name"]
@@ -140,8 +161,7 @@ def fetch_data(api_key, target_date):
                     point = outcome.get("point", None)
                     if name not in by_player:
                         by_player[name] = {}
-                    # Over 0.5 = yes (will score), Under 0.5 = no
-                    if desc == "over" or (point is not None and float(point) <= 0.5 and desc == "over"):
+                    if desc == "over":
                         by_player[name]["over"] = price
                     elif desc == "under":
                         by_player[name]["under"] = price
@@ -155,10 +175,8 @@ def fetch_data(api_key, target_date):
                         continue
                     raw_yes = american_to_implied(odds["over"])
                     if "under" in odds:
-                        raw_no = american_to_implied(odds["under"])
-                        prob   = remove_vig(raw_yes, raw_no)
+                        prob = remove_vig(raw_yes, american_to_implied(odds["under"]))
                     else:
-                        # No paired line — just use raw implied (slightly inflated but fine)
                         prob = raw_yes
                     players[name] = {
                         "name":  name,
@@ -167,6 +185,9 @@ def fetch_data(api_key, target_date):
                         "over":  odds["over"],
                         "under": odds.get("under"),
                     }
+
+    st.session_state["debug_seen_bookmakers"] = seen_bookmakers
+    st.session_state["debug_seen_markets"]    = seen_markets
 
     results = sorted(players.values(), key=lambda x: x["prob"], reverse=True)
     return results, req_count, all_dates, raw
@@ -200,12 +221,18 @@ if fetch_btn or "pin_results" in st.session_state:
     date_sel    = st.session_state.get("pin_date_sel", selected_date)
 
     # ── Debug expander
-    with st.expander("Debug info"):
+    with st.expander("Debug info — open this if no players appear"):
         st.write(f"**Selected date (ET):** `{date_sel}`")
         st.write(f"**Dates with NHL games in API:** {all_dates}")
         st.write(f"**Players found:** {len(results)}")
         st.write(f"**API requests used this fetch:** {reqs}")
-        if st.checkbox("Show raw Pinnacle JSON"):
+        st.markdown("---")
+        st.markdown("**Bookmakers that returned ANY data:**")
+        st.write(st.session_state.get("debug_seen_bookmakers", []))
+        st.markdown("**All bookmaker:market combinations returned:**")
+        st.write(st.session_state.get("debug_seen_markets", []))
+        st.caption("If 'pinnacle' is not in the bookmakers list above, the API does not have Pinnacle props for this sport/market. Share this with Claude to diagnose.")
+        if st.checkbox("Show full raw JSON"):
             st.json(st.session_state.get("pin_raw", []))
 
     if not results:
